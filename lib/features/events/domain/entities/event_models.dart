@@ -80,7 +80,6 @@ class EventExpense {
     required this.paidByName,
     required this.description,
     required this.splitCount,
-    this.receiptUrl,
     this.at,
     this.createdBy,
   });
@@ -94,7 +93,6 @@ class EventExpense {
   final String paidByName;
   final String description;
   final int splitCount;
-  final String? receiptUrl;
   final DateTime? at;
 
   /// uid of whoever logged the bill (they may delete it).

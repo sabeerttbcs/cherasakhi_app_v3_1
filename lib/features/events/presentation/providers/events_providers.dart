@@ -7,7 +7,7 @@ import '../../domain/entities/event_models.dart';
 import '../../domain/repositories/events_repository.dart';
 
 final eventsRepositoryProvider = Provider<EventsRepository>(
-  (ref) => FirestoreEventsRepository(ref.watch(firestoreProvider), ref.watch(firebaseStorageProvider)),
+  (ref) => FirestoreEventsRepository(ref.watch(firestoreProvider)),
 );
 
 final eventsProvider = StreamProvider<List<EventFund>>((ref) {

@@ -374,7 +374,6 @@ class _ExpenseTile extends StatelessWidget {
         blur: false,
         radius: 18,
         padding: const EdgeInsets.all(14),
-        onTap: e.receiptUrl == null ? null : () => _showReceipt(context, e.receiptUrl!),
         child: Row(
           children: [
             Container(
@@ -401,11 +400,6 @@ class _ExpenseTile extends StatelessWidget {
               children: [
                 Text('−${formatMoney(e.amount)}',
                     style: theme.textTheme.titleSmall?.copyWith(color: AppColors.danger, fontWeight: FontWeight.w800)),
-                if (e.receiptUrl != null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4),
-                    child: Icon(Icons.receipt_long_rounded, size: 18, color: AppColors.roseGold),
-                  ),
               ],
             ),
           ],
@@ -414,24 +408,6 @@ class _ExpenseTile extends StatelessWidget {
     );
   }
 
-  void _showReceipt(BuildContext context, String url) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: InteractiveViewer(
-          child: Image.network(
-            url,
-            fit: BoxFit.contain,
-            loadingBuilder: (_, child, progress) => progress == null
-                ? child
-                : const SizedBox(height: 240, child: Center(child: CircularProgressIndicator())),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _LineTile extends StatelessWidget {

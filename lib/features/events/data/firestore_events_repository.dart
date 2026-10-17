@@ -1,17 +1,13 @@
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../../core/network/firestore_utils.dart';
 import '../domain/entities/event_models.dart';
 import '../domain/repositories/events_repository.dart';
 
 class FirestoreEventsRepository implements EventsRepository {
-  FirestoreEventsRepository(this._db, this._storage);
+  FirestoreEventsRepository(this._db);
 
   final FirebaseFirestore _db;
-  final FirebaseStorage _storage;
 
   CollectionReference<Json> get _events => _db.collection('events');
   CollectionReference<Json> _sub(String eventId, String name) => _events.doc(eventId).collection(name);
@@ -106,7 +102,6 @@ class FirestoreEventsRepository implements EventsRepository {
                 paidByName: asString(m['paidByName']),
                 description: asString(m['description']),
                 splitCount: asInt(m['splitCount'], 1),
-                receiptUrl: m['receiptUrl'] as String?,
                 at: tsToDate(m['at']),
                 createdBy: m['createdBy'] as String?,
               );
@@ -122,16 +117,9 @@ class FirestoreEventsRepository implements EventsRepository {
     required String paidByName,
     required String description,
     required int splitCount,
-    String? receiptFilePath,
     required String byUid,
   }) async {
     final doc = _sub(eventId, 'expenses').doc();
-    String? receiptUrl;
-    if (receiptFilePath != null) {
-      final ref = _storage.ref('events/$eventId/receipts/${doc.id}.jpg');
-      await ref.putFile(File(receiptFilePath), SettableMetadata(contentType: 'image/jpeg'));
-      receiptUrl = await ref.getDownloadURL();
-    }
     await doc.set({
       'category': category.name,
       'amount': amount,
@@ -139,7 +127,6 @@ class FirestoreEventsRepository implements EventsRepository {
       'paidByName': paidByName,
       'description': description.trim(),
       'splitCount': splitCount,
-      'receiptUrl': receiptUrl,
       'createdBy': byUid,
       'at': FieldValue.serverTimestamp(),
     });

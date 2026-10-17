@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../../core/network/firestore_utils.dart';
 import '../domain/entities/quiz_models.dart';
@@ -14,10 +13,9 @@ import '../domain/usecases/answer_tools.dart';
 ///   submissions/{uid}                  create-only, startTime ≤ request.time < endTime
 /// ```
 class FirestoreQuizRepository implements QuizRepository {
-  FirestoreQuizRepository(this._db, this._storage);
+  FirestoreQuizRepository(this._db);
 
   final FirebaseFirestore _db;
-  final FirebaseStorage _storage;
 
   CollectionReference<Json> get _quizzes => _db.collection('quizzes');
   DocumentReference<Json> _content(String id) => _quizzes.doc(id).collection('content').doc('question');
@@ -46,7 +44,6 @@ class FirestoreQuizRepository implements QuizRepository {
       answerMode: m['answerMode'] == 'options' ? AnswerMode.options : AnswerMode.text,
       status: QuizStatus.values.asNameMap()[m['status']] ?? QuizStatus.scheduled,
       optionCount: asInt(m['optionCount']),
-      hasImage: m['hasImage'] == true,
       createdBy: m['createdBy'] as String?,
       createdAt: tsToDate(m['createdAt']),
       result: r is Map<String, dynamic>
@@ -79,13 +76,6 @@ class FirestoreQuizRepository implements QuizRepository {
   Future<String> scheduleContest({String? quizId, required QuizDraft draft, required String adminUid}) async {
     final ref = quizId == null ? _quizzes.doc() : _quizzes.doc(quizId);
 
-    String? imageUrl = draft.existingImageUrl;
-    if (draft.newImageBytes != null) {
-      final img = _storage.ref('quizzes/${ref.id}/question.jpg');
-      await img.putData(draft.newImageBytes!, SettableMetadata(contentType: 'image/jpeg'));
-      imageUrl = await img.getDownloadURL();
-    }
-
     final salt = generateSalt();
     final options = draft.options.map((o) => o.trim()).where((o) => o.isNotEmpty).toList();
     final accepted = draft.acceptedAnswers.map((a) => a.trim()).where((a) => a.isNotEmpty).toList();
@@ -101,7 +91,6 @@ class FirestoreQuizRepository implements QuizRepository {
         'encryptedAnswer': sealAnswer(draft.answer, salt),
         'answerMode': options.isEmpty ? 'text' : 'options',
         'optionCount': options.length,
-        'hasImage': imageUrl != null,
         'status': 'scheduled',
         'createdBy': adminUid,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -112,7 +101,6 @@ class FirestoreQuizRepository implements QuizRepository {
     batch.set(_content(ref.id), {
       'text': draft.questionText.trim(),
       'options': options,
-      'imageUrl': imageUrl,
     });
     batch.set(_secret(ref.id), {
       'answer': draft.answer.trim(),
@@ -150,7 +138,6 @@ class FirestoreQuizRepository implements QuizRepository {
       return QuizQuestion(
         text: asString(m['text']),
         options: (m['options'] as List?)?.whereType<String>().toList() ?? const [],
-        imageUrl: m['imageUrl'] as String?,
       );
     } catch (e) {
       _guard(e);

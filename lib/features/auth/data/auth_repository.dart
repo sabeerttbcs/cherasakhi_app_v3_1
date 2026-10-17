@@ -1,8 +1,32 @@
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/network/firestore_utils.dart';
+import '../../../core/utils/formatters.dart';
 import '../domain/app_user.dart';
+
+class InviteInfo {
+  const InviteInfo({
+    required this.token,
+    required this.name,
+    required this.phone,
+    required this.status,
+    required this.expiresAt,
+    this.note = '',
+  });
+
+  final String token;
+  final String name;
+  final String phone;
+  final String status;
+  final DateTime? expiresAt;
+  final String note;
+
+  bool get isPending => status == 'pending' && expiresAt != null && expiresAt!.isAfter(DateTime.now());
+}
 
 class AuthRepository {
   AuthRepository(this._auth, this._db);
@@ -10,38 +34,61 @@ class AuthRepository {
   final FirebaseAuth _auth;
   final FirebaseFirestore _db;
 
-  Future<void> sendOtp({
-    required String phone,
-    int? resendToken,
-    required void Function(String verificationId, int? resendToken) onCodeSent,
-    required void Function(String message) onError,
-  }) {
-    return _auth.verifyPhoneNumber(
-      phoneNumber: phone,
-      forceResendingToken: resendToken,
-      timeout: const Duration(seconds: 60),
-      // Android can auto-read the SMS and sign in instantly.
-      verificationCompleted: (credential) async {
-        await _auth.signInWithCredential(credential);
-      },
-      verificationFailed: (e) => onError(e.message ?? e.code),
-      codeSent: onCodeSent,
-      codeAutoRetrievalTimeout: (_) {},
+  Future<void> loginWithPhone({required String phone, required String password}) async {
+    final normalized = normalizePhone(phone);
+    if (normalized.length < 11) throw const FormatException('Enter a valid mobile number');
+    await _auth.signInWithEmailAndPassword(email: phoneLoginAlias(normalized), password: password.trim());
+  }
+
+  Future<InviteInfo?> getInvite(String token) async {
+    final snap = await _db.collection('invitations').doc(token.trim()).get(const GetOptions(source: Source.server));
+    if (!snap.exists || snap.data() == null) return null;
+    final data = snap.data()!;
+    return InviteInfo(
+      token: snap.id,
+      name: asString(data['name'], 'Member'),
+      phone: asString(data['phone']),
+      status: asString(data['status'], 'pending'),
+      expiresAt: tsToDate(data['expiresAt']),
+      note: asString(data['note']),
     );
   }
 
-  Future<void> verifyOtp(String verificationId, String smsCode) async {
-    final credential = PhoneAuthProvider.credential(
-      verificationId: verificationId,
-      smsCode: smsCode,
-    );
-    await _auth.signInWithCredential(credential);
-  }
+  Future<void> acceptInvite({required String token, required String password}) async {
+    if (password.trim().length < 6) throw const FormatException('Password must be at least 6 characters');
+    final invite = await getInvite(token);
+    if (invite == null || !invite.isPending) throw StateError('This invitation is invalid or has expired');
 
-  /// Admin fallback: Firebase Email/Password account where the password is
-  /// the admin's 6+ digit PIN.
-  Future<void> adminPinLogin({required String adminId, required String pin}) async {
-    await _auth.signInWithEmailAndPassword(email: adminId.trim(), password: pin.trim());
+    final normalizedPhone = normalizePhone(invite.phone);
+    final alias = phoneLoginAlias(normalizedPhone);
+    final credential = await _auth.createUserWithEmailAndPassword(email: alias, password: password.trim());
+    final user = credential.user;
+    if (user == null) throw StateError('Could not create the member account');
+
+    final userRef = _db.collection('users').doc(user.uid);
+    final inviteRef = _db.collection('invitations').doc(token.trim());
+    final batch = _db.batch();
+    batch.set(userRef, {
+      'name': invite.name,
+      'phone': normalizedPhone,
+      'loginAlias': alias,
+      'role': 'member',
+      'status': 'active',
+      'isKuriMember': false,
+      'inviteToken': token.trim(),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    batch.update(inviteRef, {
+      'status': 'accepted',
+      'acceptedBy': user.uid,
+      'acceptedAt': FieldValue.serverTimestamp(),
+    });
+    try {
+      await batch.commit();
+    } catch (_) {
+      await user.delete();
+      rethrow;
+    }
   }
 
   Future<void> signOut() => _auth.signOut();
@@ -57,59 +104,14 @@ class AuthRepository {
         phone: data['phone'] as String?,
         memberId: data['memberId'] as String?,
         communityId: data['communityId'] as String?,
-        // Older profiles have no flag: they were all created from the Kuri roster.
         isKuriMember: data['isKuriMember'] as bool? ?? data['memberId'] != null,
+        status: asString(data['status'], 'active'),
       );
     });
   }
 
-  /// First phone login: link the Firebase user to the roster record whose
-  /// phone matches the verified number.
-  ///   1. `members` (Kuri roster)      → isKuriMember = true
-  ///   2. `community` (general roster) → isKuriMember = false
-  /// Returns false if the number is on neither roster.
-  Future<bool> bootstrapMemberProfile(User user) async {
-    final userRef = _db.collection('users').doc(user.uid);
-    final existing = await userRef.get(const GetOptions(source: Source.server));
-    if (existing.exists) return true;
-
-    final phone = user.phoneNumber;
-    if (phone == null || phone.isEmpty) return false;
-
-    final kuri = await _db
-        .collection('members')
-        .where('phone', isEqualTo: phone)
-        .limit(1)
-        .get(const GetOptions(source: Source.server));
-    if (kuri.docs.isNotEmpty) {
-      final member = kuri.docs.first;
-      await userRef.set({
-        'phone': phone,
-        'name': asString(member.data()['name'], 'Member'),
-        'role': 'member',
-        'memberId': member.id,
-        'isKuriMember': true,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      return true;
-    }
-
-    final community = await _db
-        .collection('community')
-        .where('phone', isEqualTo: phone)
-        .limit(1)
-        .get(const GetOptions(source: Source.server));
-    if (community.docs.isEmpty) return false;
-
-    final person = community.docs.first;
-    await userRef.set({
-      'phone': phone,
-      'name': asString(person.data()['name'], 'Member'),
-      'role': 'member',
-      'communityId': person.id,
-      'isKuriMember': false,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-    return true;
+  static String generateInviteToken() {
+    final bytes = List<int>.generate(24, (_) => Random.secure().nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
   }
 }

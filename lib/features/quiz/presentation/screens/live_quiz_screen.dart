@@ -400,20 +400,6 @@ class _QuestionCard extends StatelessWidget {
           Text('QUESTION',
               style: theme.textTheme.labelSmall?.copyWith(color: AppColors.roseGold, letterSpacing: 1.6, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
-          if (question.imageUrl != null) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.network(
-                question.imageUrl!,
-                width: double.infinity,
-                fit: BoxFit.contain,
-                loadingBuilder: (_, child, p) =>
-                    p == null ? child : const SizedBox(height: 180, child: Center(child: CircularProgressIndicator())),
-                errorBuilder: (_, __, ___) => const SizedBox(height: 60, child: Center(child: Icon(Icons.broken_image_rounded))),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
           Text(question.text, style: quizTextStyle(size: 19, weight: FontWeight.w600, color: theme.colorScheme.onSurface)),
           if (revealAnswer != null && question.mode == AnswerMode.options) ...[
             const SizedBox(height: 12),

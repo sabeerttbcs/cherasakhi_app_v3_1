@@ -32,7 +32,7 @@ jobs:
         run: flutter analyze
 
       - name: Prepare Flutter base href placeholder
-        run: sed -i 's|<base href="/">|<base href="$FLUTTER_BASE_HREF">|' web/index.html
+        run: sed -i 's|<base href="/">|<base href="\$FLUTTER_BASE_HREF">|' web/index.html
 
       - name: Build Flutter web release
         run: flutter build web --release --base-href "/"

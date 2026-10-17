@@ -7,7 +7,7 @@ import '../../domain/entities/quiz_models.dart';
 import '../../domain/repositories/quiz_repository.dart';
 
 final quizRepositoryProvider = Provider<QuizRepository>(
-  (ref) => FirestoreQuizRepository(ref.watch(firestoreProvider), ref.watch(firebaseStorageProvider)),
+  (ref) => FirestoreQuizRepository(ref.watch(firestoreProvider)),
 );
 
 /// Synced once per sign-in; every quiz countdown uses it.

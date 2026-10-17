@@ -1,9 +1,12 @@
 {
-  "$comment": "Cloud Firestore schema — Friends Collective. Months are 'yyyy-MM' strings. Money is a number in the group currency. Phones are E.164.",
+  "$comment": "Cloud Firestore schema — CheraSakhi. Months are 'yyyy-MM' strings. Money is a number in the group currency. Phones are E.164. Text/structured data only; no Storage uploads.",
   "users/{uid}": {
     "name": "string",
-    "phone": "string (E.164) | absent for email admins",
+    "phone": "string (E.164)",
+    "loginAlias": "string — internal Email/Password alias derived from phone",
     "role": "'admin' | 'member'",
+    "status": "'active' | 'disabled'",
+    "inviteToken": "string | absent for seeded admins",
     "memberId": "string -> members/{memberId} (members only)",
     "createdAt": "timestamp",
     "isKuriMember": "bool — Kuri cohort access (missing on old profiles ⇒ memberId != null)",
@@ -84,7 +87,6 @@
         "paidByName": "string",
         "description": "string",
         "splitCount": "int — informational only; the engine always splits across CURRENT active participants",
-        "receiptUrl": "string | null (Storage: events/{eventId}/receipts/{id}.jpg)",
         "createdBy": "uid — admin, or the participant who logged it (may delete it)",
         "at": "timestamp"
       },
@@ -115,7 +117,7 @@
     "autoSplit": "perPerson = Σ bills ÷ active participants (integer paise, remainder to earliest joiners). paidUpfront = bills paid + contributions given − pool cash received + handovers given − handovers received. net = paidUpfront − share (>0 gets back, <0 owes). Recomputed from raw entries on every change."
   },
   "community/{personId}": {
-    "$comment": "General roster: people who may register but are NOT in the Kuri",
+    "$comment": "General text roster for event participants",
     "name": "string",
     "phone": "string (E.164)",
     "addedAt": "timestamp"
@@ -124,10 +126,18 @@
     "$comment": "Server-time offset for quiz countdowns",
     "t": "timestamp == request.time"
   },
-  "deviceTokens/{token}": {
-    "uid": "string",
-    "platform": "web | android | iOS",
-    "updatedAt": "timestamp"
+  "invitations/{token}": {
+    "$comment": "Admin-created one-time member invite; direct token read is allowed only while pending and unexpired",
+    "token": "string",
+    "name": "string",
+    "phone": "string (E.164)",
+    "loginAlias": "string",
+    "note": "string",
+    "status": "'pending' | 'accepted' | 'cancelled'",
+    "createdAt": "timestamp",
+    "expiresAt": "timestamp",
+    "acceptedBy": "uid | absent",
+    "acceptedAt": "timestamp | absent"
   },
   "quizzes/{quizId}": {
     "$comment": "Live quiz — readable by every member. No question text and no answer here.",
@@ -138,7 +148,6 @@
     "encryptedAnswer": "'sha256:<hex>' = sha256(salt + '|' + normalize(answer))",
     "answerMode": "'options' | 'text'",
     "optionCount": "int",
-    "hasImage": "bool",
     "status": "'scheduled' | 'cancelled' | 'completed'",
     "startNotified": "bool (Cloud Function)",
     "createdBy": "uid",
@@ -159,8 +168,7 @@
       "content/question": {
         "$readableFrom": "startTime",
         "text": "string",
-        "options": "string[] (empty = typed answer)",
-        "imageUrl": "string | null (Storage quizzes/{id}/question.jpg)"
+        "options": "string[] (empty = typed answer)"
       },
       "secret/answer": {
         "$readableFrom": "endTime (admins always); frozen after startTime",

@@ -25,7 +25,6 @@ abstract interface class EventsRepository {
     required String byUid,
   });
 
-  /// Uploads [receiptFilePath] (if any) to Storage, then writes the expense.
   Future<void> addExpense({
     required String eventId,
     required ExpenseCategory category,
@@ -34,7 +33,6 @@ abstract interface class EventsRepository {
     required String paidByName,
     required String description,
     required int splitCount,
-    String? receiptFilePath,
     required String byUid,
   });
 

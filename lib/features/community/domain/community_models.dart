@@ -1,5 +1,5 @@
 /// A person on the general community roster (not necessarily in the Kuri).
-/// Being on this list lets them register with phone OTP.
+/// This text roster is used for event participants; account access is invite-only.
 class CommunityPerson {
   const CommunityPerson({required this.id, required this.name, required this.phone, this.addedAt});
 
@@ -17,6 +17,7 @@ class RegisteredUser {
     required this.isAdmin,
     required this.isKuriMember,
     this.phone,
+    this.status = 'active',
   });
 
   final String uid;
@@ -24,4 +25,27 @@ class RegisteredUser {
   final String? phone;
   final bool isAdmin;
   final bool isKuriMember;
+  final String status;
+}
+
+class Invitation {
+  const Invitation({
+    required this.token,
+    required this.name,
+    required this.phone,
+    required this.status,
+    this.note = '',
+    this.expiresAt,
+    this.createdAt,
+  });
+
+  final String token;
+  final String name;
+  final String phone;
+  final String status;
+  final String note;
+  final DateTime? expiresAt;
+  final DateTime? createdAt;
+
+  bool get isPending => status == 'pending' && expiresAt != null && expiresAt!.isAfter(DateTime.now());
 }

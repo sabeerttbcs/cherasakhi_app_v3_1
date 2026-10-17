@@ -235,7 +235,6 @@ class EventSplitController extends StateNotifier<EventSplitState> {
     required ExpenseCategory category,
     required double amount,
     required TripParticipant paidBy,
-    String? receiptFilePath,
   }) async {
     final uid = _ref.read(currentUidProvider);
     if (uid == null) return;
@@ -249,7 +248,6 @@ class EventSplitController extends StateNotifier<EventSplitState> {
           // Informational only — the engine always splits across the
           // CURRENT active participants.
           splitCount: state.summary.activeCount == 0 ? 1 : state.summary.activeCount,
-          receiptFilePath: receiptFilePath,
           byUid: uid,
         );
   }

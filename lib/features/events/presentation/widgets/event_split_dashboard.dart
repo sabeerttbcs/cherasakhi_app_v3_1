@@ -574,7 +574,6 @@ class _BillTile extends StatelessWidget {
         blur: false,
         radius: 18,
         padding: const EdgeInsets.all(12),
-        onTap: e.receiptUrl == null ? null : () => _showReceipt(context, e.receiptUrl!),
         onLongPress: canDelete ? onDelete : null,
         child: Row(
           children: [
@@ -600,7 +599,6 @@ class _BillTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(formatMoney(e.amount), style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
-                if (e.receiptUrl != null) const Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.roseGold),
               ],
             ),
             if (canDelete)
@@ -616,16 +614,6 @@ class _BillTile extends StatelessWidget {
     );
   }
 
-  void _showReceipt(BuildContext context, String url) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: InteractiveViewer(child: Image.network(url, fit: BoxFit.contain)),
-      ),
-    );
-  }
 }
 
 /// Re-exported for the event screen's FAB.

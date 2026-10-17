@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # CheraSakhi — Cheranmoola Ladies Wing
 
 *Together we save · together we grow* — Kuri · Pamparam Draw · Tour Wallet
@@ -9,11 +8,11 @@ Production Flutter + Firebase app for a 60-member Kudumbashree / self-help group
 |---|---|
 | **Kuri Ledger** | 60-member monthly checklist, one-tap Paid/Unpaid toggle (works offline), bento metrics (Target Pool, Collected, Deficit, `52/60 Paid`), search & filters, per-member and bulk WhatsApp reminders (`wa.me`), full cycle history by year/month. |
 | **Pamparam Draw** | Animated spinning wheel (CustomPainter) whose slices are **only eligible members** (paid this month AND never won this cycle). Friction-curve deceleration, tick sounds, haptics, confetti + golden trophy overlay, shareable PNG winner card for WhatsApp. Winner is permanently tagged `hasClaimed = true, claimedMonth`. |
-| **Tour & Party Wallet** | Isolated event funds; contributions record **who physically holds the cash**; categorized expenses (Transport/Dining/Accommodation/Misc) with receipt photos and split-per-head; cash handovers; live "Who is holding how much cash right now?" board. |
+| **Tour & Party Wallet** | Isolated event funds; contributions record **who physically holds the cash**; categorized text expenses and split-per-head; cash handovers; live "Who is holding how much cash right now?" board. |
 
 Design: Berry Velvet `#831843` · Rose Gold `#B76E79` · Blush `#FDECEE` · Playfair Display + Poppins · logo = premium 3D Cheranmoola badge: five women flower in jewel tones, rose-gold bezel (`assets/brand/`, source script `docs/logo_build.py`).
 
-Stack: Flutter 3.22+ · Dart 3 · Riverpod 2 · Cloud Firestore (offline persistence) · Firebase Auth (Phone OTP + Admin PIN) · Firebase Storage.
+Stack: Flutter 3.22+ · Dart 3 · Riverpod 2 · Cloud Firestore (offline persistence) · Firebase Auth (invite-only Email/Password; phone number is the visible username). No Storage, uploads, SMS OTP, Google sign-in, or billing are required.
 
 ---
 
@@ -32,7 +31,7 @@ lib/
 │   ├── providers/firebase_providers.dart
 │   └── widgets/                        # GlassCard (frosted acrylic), GoldButton, AmbientBackground…
 └── features/
-    ├── auth/        data/ domain/ presentation/   # OTP login, admin PIN, profile linking
+    ├── auth/        data/ domain/ presentation/   # invite/password login, admin/member access
     ├── home/        presentation/home_shell.dart  # bottom navigation
     ├── kuri/
     │   ├── domain/entities/  member, kuri_cycle, payment, claim, ledger_summary
@@ -45,12 +44,12 @@ lib/
     │   └── presentation/ screens/spin_wheel_screen.dart, widgets/wheel_painter, winner_celebration, wheel_sfx
     └── events/
         ├── domain/  entities/event_models.dart (EventFund, Contribution, EventExpense, CashTransfer, EventLedger)
-        ├── data/    firestore_events_repository.dart (receipt upload to Storage)
+        ├── data/    firestore_events_repository.dart (text-only expenses)
         └── presentation/ screens/events_list_screen, event_detail_screen, widgets/event_sheets
 ```
 
 Domain layer is pure Dart (no Firebase types). Firestore schema: **`docs/firestore_schema.json`**.
-Security rules: **`firestore.rules`**, **`storage.rules`**.
+Security rules: **`firestore.rules`**. Firebase Storage is intentionally not configured.
 
 > **Models note:** entities are hand-written immutable classes (const constructors, `copyWith`, mappers in the data layer) instead of Freezed, so the project compiles with **no `build_runner` step**. Behaviour is identical.
 
@@ -83,8 +82,6 @@ minSdk = 23
 
 **iOS** — in `ios/Runner/Info.plist` add:
 ```xml
-<key>NSCameraUsageDescription</key><string>Take photos of expense receipts</string>
-<key>NSPhotoLibraryUsageDescription</key><string>Attach receipts from your gallery</string>
 ```
 and set the iOS deployment target to **13.0** or higher (Podfile: `platform :ios, '13.0'`).
 
@@ -93,46 +90,42 @@ and set the iOS deployment target to **13.0** or higher (Podfile: `platform :ios
 ## 3. Connect Firebase
 
 1. Create a project at console.firebase.google.com.
-2. **Authentication → Sign-in method:** enable **Phone** and **Email/Password**.
-3. Create **Firestore** (production mode) and **Storage**.
+2. **Authentication → Sign-in method:** enable **Email/Password** only. Keep Phone/SMS and Google disabled.
+3. Create **Firestore** (production mode). Do not create Storage or enable billing.
 4. In the project folder:
    ```bash
    dart pub global activate flutterfire_cli
    flutterfire configure
    ```
    This replaces `lib/firebase_options.dart`.
-5. **Android phone auth:** add your SHA-1 and SHA-256 to the Android app in Firebase settings
-   (`cd android && ./gradlew signingReport`), and enable the Play Integrity API.
-6. **iOS phone auth:** upload an APNs key in Firebase → Cloud Messaging, and add the
-   `REVERSED_CLIENT_ID` URL scheme from `GoogleService-Info.plist` in Xcode.
-7. Deploy rules:
+5. Deploy rules:
    ```bash
    npm i -g firebase-tools && firebase login
    firebase use <your-project-id>
-   firebase deploy --only firestore:rules,storage
+   firebase deploy --only firestore:rules,firestore:indexes
    ```
 
 ---
 
 ## 4. Create the first admin (one-time)
 
-1. Firebase Console → Authentication → **Add user**: e.g. `admin@cherasakhi.app`, password = a **6+ digit PIN**.
+1. Firebase Console → Authentication → **Add user** with an admin phone alias (the app converts a phone number to its internal Email/Password alias), using a strong password.
 2. Copy that user's **UID**.
 3. Firestore → create document `users/{UID}`:
    ```json
-   { "name": "Admin Name", "role": "admin" }
+   { "name": "Admin Name", "phone": "+91…", "loginAlias": "<phone-digits>@members.sakhi.sabeerlabs.com", "role": "admin", "status": "active" }
    ```
-4. In the app choose **Admin PIN**, enter the email + PIN.
+4. In the app enter the admin phone number and password.
 
 A member's phone number can also be promoted: after they log in once, change `role` to `admin` on their `users/{uid}` doc.
 
 ## 5. Daily use
 
-1. **Admin → Add member** (up to 60). Phone numbers are stored in E.164 (`+91…`); members log in with **Member OTP** using that exact number and are linked automatically.
+1. **Admin → Add member** creates a one-time invitation and opens a WhatsApp link. The member creates a password from that link, then signs in with the invited phone number.
 2. **Admin → Start new cycle** (monthly installment, start month, months — defaults to member count).
 3. Each month: toggle Paid in the **Kuri Ledger**; tap the green chat icon or **Remind all unpaid** for WhatsApp reminders.
 4. **Pamparam tab → Spin the wheel.** Only paid, not-yet-won members appear. The result is saved before the wheel animates (no re-rolls). Share the winner card to the WhatsApp group.
-5. **Tour Wallet:** create a fund → add contributions (choose who received the cash) → log expenses with receipts → record handovers. The "Who is holding the cash" board always reconciles.
+5. **Tour Wallet:** create a fund → add contributions (choose who received the cash) → log text expenses → record handovers. The "Who is holding the cash" board always reconciles.
 
 Change currency / country code / group name in `lib/core/constants/app_constants.dart`.
 
@@ -152,7 +145,7 @@ flutter build ipa                    # iOS (requires Xcode + signing)
 * Only admins can write anything; members are read-only.
 * `draws/{month}` and `claims/{memberId}` are **create-only** → a month can be drawn once, and a member can win only once per cycle.
 * A draw is rejected unless the winner's payment doc for that month is `paid == true`, and the matching claim is written in the same transaction.
-* Receipt uploads: admins only, images < 8 MB.
+* Member profiles, invitations, quiz questions, settings, and event ledgers contain text and structured data only.
 
 ## Live Quiz & access control (v2)
 
@@ -160,8 +153,7 @@ flutter build ipa                    # iOS (requires Xcode + signing)
   (`users/{uid}.isKuriMember == true`) and admins, enforced both by `KuriGuard` and by
   Firestore rules (`isKuri()`). Others see the lock banner.
 * **Live Quiz is open to everyone** registered, including community-only members.
-* **Community roster:** admins add non-Kuri people under *Profile → Community & access*.
-  They can then sign in with OTP. The *Kuri access* tab switches `isKuriMember` per user.
+* **Community roster:** admins add non-Kuri people under *Profile → Community & access* and send one-time WhatsApp invitations. The *Kuri access* tab switches `isKuriMember` and enabled/disabled status per user.
 * **Scheduling:** *Live Quiz → Schedule quiz*. Pick a start date/time and either an end time or a
   duration. The question unlocks at the start time, the answer at the end time (rules use server time).
 * **Fair play:** one server-timestamped answer per member; the quiz always runs to the end;

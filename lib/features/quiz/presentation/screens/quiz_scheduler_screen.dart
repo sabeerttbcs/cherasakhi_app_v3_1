@@ -1,8 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/glass_card.dart';
@@ -51,8 +48,6 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
   late DateTime _start;
   late DateTime _end;
   int _durationMin = 30;
-  Uint8List? _imageBytes;
-  String? _existingImageUrl;
   bool _saving = false;
   bool _loadingExisting = false;
 
@@ -84,7 +79,6 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
       if (!mounted) return;
       setState(() {
         _question.text = q.text;
-        _existingImageUrl = q.imageUrl;
         _mode = q.mode;
         _answer.text = secret.answer;
         _accepted.text = secret.acceptedAnswers.join(', ');
@@ -153,13 +147,6 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
     if (picked != null) setState(() => _end = picked);
   }
 
-  Future<void> _pickImage() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75, maxWidth: 1600);
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (mounted) setState(() => _imageBytes = bytes);
-  }
-
   // ───────────────────────── save ─────────────────────────
 
   String? _validateSchedule() {
@@ -206,8 +193,6 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
           : _accepted.text.split(RegExp(r'[,\n]')).map((a) => a.trim()).where((a) => a.isNotEmpty).toList(),
       startTime: _start,
       endTime: _effectiveEnd,
-      newImageBytes: _imageBytes,
-      existingImageUrl: _existingImageUrl,
     );
 
     setState(() => _saving = true);
@@ -280,12 +265,8 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
                     maxLines: 6,
                     style: quizTextStyle(size: 17),
                     decoration: const InputDecoration(labelText: 'Question text (Malayalam or English)', alignLabelWithHint: true),
-                    validator: (v) => ((v == null || v.trim().isEmpty) && _imageBytes == null && _existingImageUrl == null)
-                        ? 'Enter the question (or add an image)'
-                        : null,
+                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter the question text' : null,
                   ),
-                  const SizedBox(height: 10),
-                  _imagePicker(),
 
                   const SectionHeader('Answer key', subtitle: 'Sealed and hidden from members until the end time'),
                   SegmentedButton<AnswerMode>(
@@ -356,38 +337,6 @@ class _QuizSchedulerScreenState extends ConsumerState<QuizSchedulerScreen> {
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _imagePicker() {
-    final hasImage = _imageBytes != null || _existingImageUrl != null;
-    if (!hasImage) {
-      return OutlinedButton.icon(
-        onPressed: _pickImage,
-        icon: const Icon(Icons.add_photo_alternate_rounded),
-        label: const Text('Add an image to the question (optional)'),
-      );
-    }
-    return Stack(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: _imageBytes != null
-              ? Image.memory(_imageBytes!, height: 180, width: double.infinity, fit: BoxFit.cover)
-              : Image.network(_existingImageUrl!, height: 180, width: double.infinity, fit: BoxFit.cover),
-        ),
-        Positioned(
-          right: 6,
-          top: 6,
-          child: IconButton.filled(
-            onPressed: () => setState(() {
-              _imageBytes = null;
-              _existingImageUrl = null;
-            }),
-            icon: const Icon(Icons.close_rounded),
-          ),
-        ),
-      ],
     );
   }
 

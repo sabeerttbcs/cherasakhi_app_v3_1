@@ -24,7 +24,7 @@ String formatDate(DateTime? d) => d == null ? '—' : DateFormat('d MMM yyyy').f
 String formatDateTime(DateTime? d) => d == null ? '—' : DateFormat('d MMM, h:mm a').format(d);
 
 /// Normalises any typed number to E.164 (`+919876543210`), which is also the
-/// format Firebase Phone Auth puts into `request.auth.token.phone_number`.
+/// format used for all stored phone numbers and the derived login alias.
 String normalizePhone(String raw) {
   final cleaned = raw.replaceAll(RegExp(r'[^0-9+]'), '');
   if (cleaned.startsWith('+')) {
@@ -37,6 +37,14 @@ String normalizePhone(String raw) {
   }
   if (digits.length == 10) return '+${AppConstants.defaultCountryCode}$digits';
   return '+$digits';
+}
+
+/// Stable Firebase Email/Password alias for a phone-number login.
+/// The phone remains the visible username; the alias is never shown to users.
+String phoneLoginAlias(String raw) {
+  final phone = normalizePhone(raw);
+  final digits = phone.replaceAll('+', '');
+  return '$digits@members.sakhi.sabeerlabs.com';
 }
 
 String initialsOf(String name) {

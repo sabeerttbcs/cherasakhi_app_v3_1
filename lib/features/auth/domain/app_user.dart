@@ -9,6 +9,7 @@ class AppUser {
     this.memberId,
     this.communityId,
     this.isKuriMember = false,
+    this.status = 'active',
   });
 
   final String uid;
@@ -25,6 +26,9 @@ class AppUser {
   /// Enrolled in the monthly Kuri cohort. Only these users (and admins) can
   /// see ledgers, payment checklists and the Pamparam draw.
   final bool isKuriMember;
+  final String status;
+
+  bool get isDisabled => status != 'active';
 
   // ───────── role-based helpers ─────────
   bool get isAdmin => role == UserRole.admin;

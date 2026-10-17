@@ -1,9 +1,5 @@
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -50,7 +46,6 @@ class _SplitExpenseSheetState extends ConsumerState<SplitExpenseSheet> {
   final _amount = TextEditingController();
   ExpenseCategory _category = ExpenseCategory.transport;
   String? _payerId;
-  XFile? _receipt;
   bool _saving = false;
 
   @override
@@ -69,11 +64,6 @@ class _SplitExpenseSheetState extends ConsumerState<SplitExpenseSheet> {
     super.dispose();
   }
 
-  Future<void> _pickReceipt(ImageSource source) async {
-    final f = await ImagePicker().pickImage(source: source, imageQuality: 70, maxWidth: 1600);
-    if (f != null && mounted) setState(() => _receipt = f);
-  }
-
   Future<void> _save(List<TripParticipant> participants) async {
     if (!_form.currentState!.validate()) return;
     final payer = participants.firstWhere((p) => p.id == _payerId);
@@ -84,16 +74,7 @@ class _SplitExpenseSheetState extends ConsumerState<SplitExpenseSheet> {
       category: _category,
       amount: double.parse(_amount.text),
       paidBy: payer,
-      receiptFilePath: _receipt?.path,
     );
-    if (_receipt == null) {
-      // Saved to the local cache instantly (works offline), synced later.
-      op.catchError((Object e) {
-        messenger.showSnackBar(SnackBar(content: Text('Could not save bill: $e')));
-      });
-      Navigator.of(context).pop();
-      return;
-    }
     setState(() => _saving = true);
     try {
       await op;
@@ -101,7 +82,7 @@ class _SplitExpenseSheetState extends ConsumerState<SplitExpenseSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
-      messenger.showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Could not save bill: $e')));
     }
   }
 
@@ -198,48 +179,9 @@ class _SplitExpenseSheetState extends ConsumerState<SplitExpenseSheet> {
                 ),
               ),
             const SizedBox(height: 12),
-            if (_receipt != null)
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: kIsWeb
-                        ? Image.network(_receipt!.path, height: 140, width: double.infinity, fit: BoxFit.cover)
-                        : Image.file(File(_receipt!.path), height: 140, width: double.infinity, fit: BoxFit.cover),
-                  ),
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: IconButton.filled(
-                      onPressed: () => setState(() => _receipt = null),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ),
-                ],
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickReceipt(ImageSource.camera),
-                      icon: const Icon(Icons.photo_camera_rounded),
-                      label: const Text('Bill photo'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickReceipt(ImageSource.gallery),
-                      icon: const Icon(Icons.photo_library_rounded),
-                      label: const Text('Gallery'),
-                    ),
-                  ),
-                ],
-              ),
             const SizedBox(height: 18),
             GoldButton(
-              label: _saving ? 'UPLOADING…' : 'SAVE & SPLIT',
+              label: 'SAVE & SPLIT',
               icon: Icons.call_split_rounded,
               loading: _saving,
               expand: true,

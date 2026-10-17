@@ -16,19 +16,18 @@ service cloud.firestore {
     function signedIn()   { return request.auth != null; }
     function userPath()   { return /databases/$(database)/documents/users/$(request.auth.uid); }
     function hasProfile() { return signedIn() && exists(userPath()); }
-    function isAdmin()    { return hasProfile() && get(userPath()).data.role == 'admin'; }
-    function isMember()   { return hasProfile(); }
+    function isActiveProfile() { return hasProfile() && get(userPath()).data.get('status', 'active') == 'active'; }
+    function isAdmin()    { return isActiveProfile() && get(userPath()).data.role == 'admin'; }
+    function isMember()   { return isActiveProfile(); }
 
     // Kuri cohort (+ admins). Profiles created before the flag existed came
     // from the Kuri roster (memberId set), so they count as Kuri members.
     function isKuri() {
-      return hasProfile() && (
+      return isActiveProfile() && (
         get(userPath()).data.role == 'admin'
         || get(userPath()).data.get('isKuriMember', get(userPath()).data.get('memberId', null) != null) == true
       );
     }
-    function authPhone()  { return request.auth.token.get('phone_number', null); }
-
     function incoming()   { return request.resource.data; }
     function validMoney(v) { return v is number && v >= 0 && v < 100000000; }
     function monthKey(v)  { return v is string && v.matches('^[0-9]{4}-(0[1-9]|1[0-2])$'); }
@@ -37,37 +36,57 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
 
-      // Self-registration on first phone login: only as 'member', and only
-      // if the verified phone matches the linked Kuri or community roster record.
+      // A member can create a profile only while accepting an admin-created
+      // one-time invitation in the same Firestore batch.
       allow create: if signedIn()
         && request.auth.uid == uid
         && incoming().role == 'member'
-        && authPhone() != null
-        && incoming().phone == authPhone()
-        && (
-          // Kuri roster → Kuri member
-          ('memberId' in incoming()
-            && incoming().keys().hasOnly(['phone', 'name', 'role', 'memberId', 'isKuriMember', 'createdAt'])
-            && incoming().get('isKuriMember', true) == true
-            && exists(/databases/$(database)/documents/members/$(incoming().memberId))
-            && get(/databases/$(database)/documents/members/$(incoming().memberId)).data.phone == authPhone())
-          ||
-          // Community roster → registered member WITHOUT Kuri access
-          ('communityId' in incoming()
-            && incoming().keys().hasOnly(['phone', 'name', 'role', 'communityId', 'isKuriMember', 'createdAt'])
-            && incoming().isKuriMember == false
-            && exists(/databases/$(database)/documents/community/$(incoming().communityId))
-            && get(/databases/$(database)/documents/community/$(incoming().communityId)).data.phone == authPhone())
-        );
+        && incoming().status == 'active'
+        && incoming().phone is string
+        && incoming().loginAlias == request.auth.token.email
+        && incoming().inviteToken is string
+        && incoming().keys().hasOnly(['phone', 'name', 'loginAlias', 'role', 'status', 'isKuriMember', 'inviteToken', 'createdAt'])
+        && existsAfter(/databases/$(database)/documents/invitations/$(incoming().inviteToken))
+        && getAfter(/databases/$(database)/documents/invitations/$(incoming().inviteToken)).data.status == 'accepted'
+        && getAfter(/databases/$(database)/documents/invitations/$(incoming().inviteToken)).data.acceptedBy == uid
+        && getAfter(/databases/$(database)/documents/invitations/$(incoming().inviteToken)).data.phone == incoming().phone;
 
       // Role / isKuriMember changes only by admins (first admin made in the console).
       allow update, delete: if isAdmin();
     }
 
-    // ---------- community roster (non-Kuri members who may register) ----------
+    // ---------- one-time invitations ----------
+    match /invitations/{token} {
+      // The token link is the only public read. It reveals no password or
+      // account identity and expires automatically.
+      allow get: if resource.data.status == 'pending' && resource.data.expiresAt > request.time;
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && incoming().token == token
+        && incoming().name is string && incoming().name.size() > 1
+        && incoming().phone is string && incoming().phone.matches('^\\+[0-9]{8,15}$')
+        && incoming().loginAlias is string
+        && incoming().status == 'pending'
+        && incoming().expiresAt is timestamp && incoming().expiresAt > request.time
+        && incoming().keys().hasOnly(['token', 'name', 'phone', 'loginAlias', 'note', 'status', 'createdAt', 'expiresAt']);
+      allow update: if isAdmin()
+        && incoming().diff(resource.data).affectedKeys().hasOnly(['status'])
+        && incoming().status == 'cancelled'
+        || signedIn()
+          && resource.data.status == 'pending'
+          && resource.data.expiresAt > request.time
+          && incoming().status == 'accepted'
+          && incoming().acceptedBy == request.auth.uid
+          && incoming().diff(resource.data).affectedKeys().hasOnly(['status', 'acceptedBy', 'acceptedAt'])
+          && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+          && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.inviteToken == token
+          && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone == resource.data.phone;
+      allow delete: if false;
+    }
+
+    // ---------- community roster (admin-managed text roster) ----------
     match /community/{personId} {
-      allow read: if isAdmin()
-        || (signedIn() && authPhone() != null && resource.data.phone == authPhone());
+      allow read: if isMember();
       allow create, update: if isAdmin()
         && incoming().name is string && incoming().name.size() > 1
         && incoming().phone is string && incoming().phone.matches('^\\+[0-9]{8,15}$');
@@ -84,10 +103,7 @@ service cloud.firestore {
 
     // ---------- members ----------
     match /members/{memberId} {
-      // Unregistered user may read ONLY the record matching their own phone
-      // (needed for first-login linking).
-      allow read: if isKuri()
-        || (signedIn() && authPhone() != null && resource.data.phone == authPhone());
+      allow read: if isKuri();
 
       allow create, update: if isAdmin()
         && incoming().name is string && incoming().name.size() > 1
@@ -144,15 +160,6 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/cycles/$(cycleId)/draws/$(incoming().claimedMonth)).data.winnerId == memberId;
         allow update, delete: if false;
       }
-    }
-
-    // Push tokens: each device writes only its own; only admins/Functions read.
-    match /deviceTokens/{token} {
-      allow create, update: if signedIn()
-        && incoming().uid == request.auth.uid
-        && incoming().keys().hasOnly(['uid', 'platform', 'updatedAt']);
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
-      allow read: if isAdmin();
     }
 
     // ---------- live quiz (open to every registered member) ----------

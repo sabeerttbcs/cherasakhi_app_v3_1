@@ -15,3 +15,7 @@ final communityRosterProvider = StreamProvider.autoDispose<List<CommunityPerson>
 final registeredUsersProvider = StreamProvider.autoDispose<List<RegisteredUser>>(
   (ref) => ref.watch(communityRepositoryProvider).watchRegisteredUsers(),
 );
+
+final invitationsProvider = StreamProvider.autoDispose<List<Invitation>>(
+  (ref) => ref.watch(communityRepositoryProvider).watchInvitations(),
+);

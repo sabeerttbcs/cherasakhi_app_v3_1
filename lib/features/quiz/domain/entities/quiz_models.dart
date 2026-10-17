@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 /// Stored lifecycle flag. Timing (scheduled → live → ended) is derived from
 /// `startTime` / `endTime` against server time — see [QuizContest.phaseAt].
 enum QuizStatus { scheduled, cancelled, completed }
@@ -23,7 +21,6 @@ class QuizContest {
     required this.answerMode,
     required this.status,
     this.optionCount = 0,
-    this.hasImage = false,
     this.createdBy,
     this.createdAt,
     this.result,
@@ -42,7 +39,6 @@ class QuizContest {
   final AnswerMode answerMode;
   final QuizStatus status;
   final int optionCount;
-  final bool hasImage;
   final String? createdBy;
   final DateTime? createdAt;
 
@@ -61,11 +57,10 @@ class QuizContest {
 
 /// `quizzes/{id}/content/question` — readable from [QuizContest.startTime].
 class QuizQuestion {
-  const QuizQuestion({required this.text, this.options = const [], this.imageUrl});
+  const QuizQuestion({required this.text, this.options = const []});
 
   final String text;
   final List<String> options;
-  final String? imageUrl;
 
   AnswerMode get mode => options.isEmpty ? AnswerMode.text : AnswerMode.options;
 }
@@ -146,8 +141,6 @@ class QuizDraft {
     required this.acceptedAnswers,
     required this.startTime,
     required this.endTime,
-    this.newImageBytes,
-    this.existingImageUrl,
   });
 
   final String title;
@@ -160,8 +153,6 @@ class QuizDraft {
   final List<String> acceptedAnswers;
   final DateTime startTime;
   final DateTime endTime;
-  final Uint8List? newImageBytes;
-  final String? existingImageUrl;
 
   AnswerMode get mode => options.isEmpty ? AnswerMode.text : AnswerMode.options;
 }

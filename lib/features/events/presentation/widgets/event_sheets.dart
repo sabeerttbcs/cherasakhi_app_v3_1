@@ -1,8 +1,5 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/providers/firebase_providers.dart';
@@ -269,7 +266,6 @@ class _ExpenseSheetState extends ConsumerState<ExpenseSheet> {
   ExpenseCategory _category = ExpenseCategory.transport;
   String? _paidById;
   late int _split = widget.defaultSplit < 1 ? 1 : widget.defaultSplit;
-  XFile? _receipt;
   bool _saving = false;
 
   @override
@@ -277,11 +273,6 @@ class _ExpenseSheetState extends ConsumerState<ExpenseSheet> {
     _amount.dispose();
     _desc.dispose();
     super.dispose();
-  }
-
-  Future<void> _pick(ImageSource source) async {
-    final file = await ImagePicker().pickImage(source: source, imageQuality: 70, maxWidth: 1600);
-    if (file != null && mounted) setState(() => _receipt = file);
   }
 
   Future<void> _save(List<Member> members) async {
@@ -297,15 +288,8 @@ class _ExpenseSheetState extends ConsumerState<ExpenseSheet> {
           paidByName: payer.name,
           description: _desc.text.trim().isEmpty ? _category.label : _desc.text,
           splitCount: _split,
-          receiptFilePath: _receipt?.path,
           byUid: uid,
         );
-
-    if (_receipt == null) {
-      _fireAndForget(context, op, 'Could not save expense');
-      return;
-    }
-    // With a receipt we must wait for the upload (needs network).
     setState(() => _saving = true);
     try {
       await op;
@@ -313,7 +297,7 @@ class _ExpenseSheetState extends ConsumerState<ExpenseSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save expense: $e')));
     }
   }
 
@@ -389,47 +373,9 @@ class _ExpenseSheetState extends ConsumerState<ExpenseSheet> {
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        if (_receipt != null)
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.file(File(_receipt!.path), height: 140, width: double.infinity, fit: BoxFit.cover),
-              ),
-              Positioned(
-                right: 6,
-                top: 6,
-                child: IconButton.filled(
-                  onPressed: () => setState(() => _receipt = null),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ),
-            ],
-          )
-        else
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _pick(ImageSource.camera),
-                  icon: const Icon(Icons.photo_camera_rounded),
-                  label: const Text('Receipt photo'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _pick(ImageSource.gallery),
-                  icon: const Icon(Icons.photo_library_rounded),
-                  label: const Text('From gallery'),
-                ),
-              ),
-            ],
-          ),
         const SizedBox(height: 20),
         GoldButton(
-          label: _saving ? 'UPLOADING…' : 'SAVE EXPENSE',
+          label: 'SAVE EXPENSE',
           icon: Icons.check_rounded,
           loading: _saving,
           expand: true,

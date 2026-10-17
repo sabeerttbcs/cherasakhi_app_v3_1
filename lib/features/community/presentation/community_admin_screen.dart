@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/utils/whatsapp.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/empty_state.dart';
@@ -11,25 +12,140 @@ import '../../../core/widgets/member_avatar.dart';
 import '../domain/community_models.dart';
 import 'community_providers.dart';
 
-/// Admin: who can register (community roster) and who can see the Kuri.
+/// Admin: invite-only access, community roster, and Kuri access.
 class CommunityAdminScreen extends StatelessWidget {
   const CommunityAdminScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Community & access'),
           bottom: const TabBar(
             tabs: [
+              Tab(icon: Icon(Icons.mail_lock_rounded), text: 'Invitations'),
               Tab(icon: Icon(Icons.groups_rounded), text: 'Community roster'),
               Tab(icon: Icon(Icons.lock_person_rounded), text: 'Kuri access'),
             ],
           ),
         ),
-        body: const TabBarView(children: [_RosterTab(), _AccessTab()]),
+        body: const TabBarView(children: [_InvitationsTab(), _RosterTab(), _AccessTab()]),
+      ),
+    );
+  }
+}
+
+class _InvitationsTab extends ConsumerWidget {
+  const _InvitationsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final invitations = ref.watch(invitationsProvider);
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'create-invite',
+        backgroundColor: AppColors.roseGold,
+        foregroundColor: Colors.white,
+        onPressed: () => _showInviteSheet(context, ref),
+        icon: const Icon(Icons.person_add_alt_1_rounded),
+        label: const Text('Add member'),
+      ),
+      body: invitations.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => EmptyState(icon: Icons.error_outline, title: 'Could not load invitations', message: '$e'),
+        data: (list) => list.isEmpty
+            ? const EmptyState(
+                icon: Icons.mail_lock_rounded,
+                title: 'No invitations yet',
+                message: 'Create an invite to let a member create a password and sign in with their phone number.',
+              )
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                itemCount: list.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, i) => _InvitationTile(invitation: list[i]),
+              ),
+      ),
+    );
+  }
+
+  static void _showInviteSheet(BuildContext context, WidgetRef ref) {
+    final name = TextEditingController();
+    final phone = TextEditingController();
+    final note = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
+        child: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Add member & create invite', style: Theme.of(sheet).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              TextFormField(controller: name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Full name', prefixIcon: Icon(Icons.person_rounded)), validator: (v) => (v == null || v.trim().length < 2) ? 'Enter a name' : null),
+              const SizedBox(height: 12),
+              TextFormField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone / WhatsApp number', prefixIcon: Icon(Icons.phone_rounded)), validator: (v) => normalizePhone(v ?? '').length < 11 ? 'Enter a valid number' : null),
+              const SizedBox(height: 12),
+              TextFormField(controller: note, decoration: const InputDecoration(labelText: 'Note (optional)', prefixIcon: Icon(Icons.notes_rounded)), maxLines: 2),
+              const SizedBox(height: 20),
+              GoldButton(
+                label: 'CREATE WHATSAPP INVITE',
+                icon: Icons.send_rounded,
+                expand: true,
+                onPressed: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    final token = await ref.read(communityRepositoryProvider).createInvitation(name: name.text, phone: phone.text, note: note.text);
+                    final link = 'https://sakhi.sabeerlabs.com/?invite=$token';
+                    await WhatsAppLauncher.send(phone: normalizePhone(phone.text), message: 'Hello ${name.text.trim()} 🌸\n\nYou are invited to CheraSakhi. Create your password here:\n$link\n\nThis one-time invitation expires in 7 days.');
+                    if (context.mounted) Navigator.of(sheet).pop();
+                    messenger.showSnackBar(const SnackBar(content: Text('Invitation created and WhatsApp opened.')));
+                  } catch (e) {
+                    messenger.showSnackBar(SnackBar(content: Text('Could not create invitation: $e')));
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InvitationTile extends ConsumerWidget {
+  const _InvitationTile({required this.invitation});
+
+  final Invitation invitation;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = invitation.isPending ? 'Pending · expires ${formatDate(invitation.expiresAt)}' : invitation.status;
+    final link = 'https://sakhi.sabeerlabs.com/?invite=${invitation.token}';
+    return GlassCard(
+      blur: false,
+      radius: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          MemberAvatar(name: invitation.name),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(invitation.name, style: Theme.of(context).textTheme.titleSmall), Text(invitation.phone, style: Theme.of(context).textTheme.bodySmall), Text(status, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: invitation.isPending ? AppColors.roseGold : null))])),
+          if (invitation.isPending) ...[
+            IconButton(tooltip: 'Send WhatsApp invite', icon: const Icon(Icons.chat_rounded), onPressed: () => WhatsAppLauncher.send(phone: invitation.phone, message: 'Join CheraSakhi and create your password:\n$link')),
+            IconButton(tooltip: 'Cancel invite', icon: const Icon(Icons.cancel_outlined), onPressed: () => ref.read(communityRepositoryProvider).cancelInvitation(invitation.token)),
+          ],
+        ],
       ),
     );
   }
@@ -57,8 +173,8 @@ class _RosterTab extends ConsumerWidget {
             ? const EmptyState(
                 icon: Icons.groups_rounded,
                 title: 'No community members yet',
-                message: 'People on this list can register with OTP and join the Live Quiz. '
-                    'Kuri members are added from the Kuri Ledger as before.',
+                message: 'Use Add member in the Invitations tab for account access. '
+                    'This roster remains available for text-only event participants.',
               )
             : ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -230,6 +346,12 @@ class _AccessTab extends ConsumerWidget {
                         child: Icon(Icons.verified_user_rounded, color: AppColors.roseGold),
                       )
                     else ...[
+                      Text(u.status == 'active' ? 'Active' : 'Disabled', style: Theme.of(context).textTheme.labelMedium),
+                      Switch.adaptive(
+                        value: u.status == 'active',
+                        activeColor: AppColors.blossom,
+                        onChanged: (v) => ref.read(communityRepositoryProvider).setMemberStatus(u.uid, v),
+                      ),
                       Text('Kuri', style: Theme.of(context).textTheme.labelMedium),
                       Switch.adaptive(
                         value: u.isKuriMember,
