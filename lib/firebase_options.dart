@@ -58,6 +58,5 @@ class DefaultFirebaseOptions {
     messagingSenderId: '722657692616',
     projectId: 'cherasakhi',
     authDomain: 'cherasakhi.firebaseapp.com',
-    storageBucket: 'cherasakhi.firebasestorage.app',
   );
 }
