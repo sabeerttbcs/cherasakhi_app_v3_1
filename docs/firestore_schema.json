@@ -1,0 +1,180 @@
+{
+  "$comment": "Cloud Firestore schema — Friends Collective. Months are 'yyyy-MM' strings. Money is a number in the group currency. Phones are E.164.",
+  "users/{uid}": {
+    "name": "string",
+    "phone": "string (E.164) | absent for email admins",
+    "role": "'admin' | 'member'",
+    "memberId": "string -> members/{memberId} (members only)",
+    "createdAt": "timestamp",
+    "isKuriMember": "bool — Kuri cohort access (missing on old profiles ⇒ memberId != null)",
+    "communityId": "string -> community/{id} (community-only members)"
+  },
+  "members/{memberId}": {
+    "name": "string",
+    "phone": "string (E.164, must equal the Phone-Auth number)",
+    "seatNo": "int (1..60)",
+    "isActive": "bool",
+    "joinedAt": "timestamp"
+  },
+  "cycles/{cycleId}": {
+    "name": "string",
+    "startMonth": "string yyyy-MM",
+    "durationMonths": "int",
+    "monthlyInstallment": "number",
+    "status": "'active' | 'closed'",
+    "createdBy": "uid",
+    "createdAt": "timestamp",
+    "closedAt": "timestamp?",
+    "subcollections": {
+      "payments/{monthKey}_{memberId}": {
+        "memberId": "string",
+        "memberName": "string",
+        "monthKey": "string yyyy-MM",
+        "paid": "bool",
+        "amount": "number",
+        "paidAt": "timestamp | null",
+        "markedBy": "uid",
+        "updatedAt": "timestamp"
+      },
+      "draws/{monthKey}": {
+        "monthKey": "string",
+        "winnerId": "string",
+        "winnerName": "string",
+        "winnerSeatNo": "int",
+        "amount": "number",
+        "eligibleCount": "int",
+        "drawnBy": "uid",
+        "drawnAt": "timestamp",
+        "$immutable": true
+      },
+      "claims/{memberId}": {
+        "memberId": "string",
+        "memberName": "string",
+        "hasClaimed": "true",
+        "claimedMonth": "string yyyy-MM",
+        "amount": "number",
+        "claimedAt": "timestamp",
+        "$immutable": true
+      }
+    }
+  },
+  "events/{eventId}": {
+    "title": "string",
+    "category": "'trip' | 'party' | 'festival' | 'other'",
+    "perHeadTarget": "number",
+    "description": "string",
+    "isSettled": "bool",
+    "createdBy": "uid",
+    "createdAt": "timestamp",
+    "subcollections": {
+      "contributions/{id}": {
+        "memberId": "string",
+        "memberName": "string",
+        "amount": "number",
+        "holderId": "string (member who physically received the cash)",
+        "holderName": "string",
+        "note": "string",
+        "createdBy": "uid",
+        "at": "timestamp"
+      },
+      "expenses/{id}": {
+        "category": "'transport' | 'dining' | 'accommodation' | 'misc'",
+        "amount": "number",
+        "paidById": "string (cash holder)",
+        "paidByName": "string",
+        "description": "string",
+        "splitCount": "int — informational only; the engine always splits across CURRENT active participants",
+        "receiptUrl": "string | null (Storage: events/{eventId}/receipts/{id}.jpg)",
+        "createdBy": "uid — admin, or the participant who logged it (may delete it)",
+        "at": "timestamp"
+      },
+      "transfers/{id}": {
+        "fromId": "string",
+        "fromName": "string",
+        "toId": "string",
+        "toName": "string",
+        "amount": "number",
+        "note": "string",
+        "createdBy": "uid",
+        "at": "timestamp"
+      },
+      "participants/{participantId}": {
+        "$comment": "Trip roster for the auto-split. id = Kuri member id | community id | 'guest_<auto>'",
+        "name": "string",
+        "kind": "'kuri' | 'community' | 'guest'",
+        "active": "bool — only active participants share the cost",
+        "joinedAt": "timestamp (join order decides who absorbs leftover paise)",
+        "leftAt": "timestamp | null",
+        "addedBy": "uid"
+      }
+    }
+  },
+  "derived": {
+    "cashHolderBalance": "contributions received + transfers in − expenses paid − transfers out (computed client-side in EventLedger.compute)",
+    "quizWinner": "Fastest Finger First: among submissions in [startTime, endTime) whose normalized answer is accepted, earliest submittedAt wins (tie → lowest userId). Same code on phones (Dart) and server (functions/quiz_logic.js).",
+    "autoSplit": "perPerson = Σ bills ÷ active participants (integer paise, remainder to earliest joiners). paidUpfront = bills paid + contributions given − pool cash received + handovers given − handovers received. net = paidUpfront − share (>0 gets back, <0 owes). Recomputed from raw entries on every change."
+  },
+  "community/{personId}": {
+    "$comment": "General roster: people who may register but are NOT in the Kuri",
+    "name": "string",
+    "phone": "string (E.164)",
+    "addedAt": "timestamp"
+  },
+  "clockSync/{uid}": {
+    "$comment": "Server-time offset for quiz countdowns",
+    "t": "timestamp == request.time"
+  },
+  "deviceTokens/{token}": {
+    "uid": "string",
+    "platform": "web | android | iOS",
+    "updatedAt": "timestamp"
+  },
+  "quizzes/{quizId}": {
+    "$comment": "Live quiz — readable by every member. No question text and no answer here.",
+    "title": "string",
+    "category": "string",
+    "startTime": "timestamp",
+    "endTime": "timestamp (≤ start + 24h)",
+    "encryptedAnswer": "'sha256:<hex>' = sha256(salt + '|' + normalize(answer))",
+    "answerMode": "'options' | 'text'",
+    "optionCount": "int",
+    "hasImage": "bool",
+    "status": "'scheduled' | 'cancelled' | 'completed'",
+    "startNotified": "bool (Cloud Function)",
+    "createdBy": "uid",
+    "createdAt": "timestamp",
+    "updatedAt": "timestamp",
+    "result": {
+      "correctAnswer": "string",
+      "correctCount": "int",
+      "totalSubmissions": "int",
+      "winnerId": "uid | null",
+      "winnerName": "string | null",
+      "winnerAnswer": "string | null",
+      "winnerSubmittedAt": "timestamp (µs precision) | null",
+      "evaluatedBy": "'function' | 'admin'",
+      "evaluatedAt": "timestamp"
+    },
+    "subcollections": {
+      "content/question": {
+        "$readableFrom": "startTime",
+        "text": "string",
+        "options": "string[] (empty = typed answer)",
+        "imageUrl": "string | null (Storage quizzes/{id}/question.jpg)"
+      },
+      "secret/answer": {
+        "$readableFrom": "endTime (admins always); frozen after startTime",
+        "answer": "string",
+        "acceptedAnswers": "string[]",
+        "salt": "32 hex chars"
+      },
+      "submissions/{uid}": {
+        "$rules": "create-only, startTime ≤ request.time < endTime, not admins",
+        "userId": "uid",
+        "userName": "string (must equal profile name)",
+        "submittedAnswer": "string ≤ 200",
+        "submittedAt": "timestamp == request.time"
+      }
+    }
+  }
+}

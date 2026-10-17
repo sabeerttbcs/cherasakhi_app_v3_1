@@ -1,0 +1,287 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════
+//  CheraSakhi (Cheranmoola Ladies Wing) — Production Firestore Security Rules
+//  • Admins (users/{uid}.role == 'admin'): read + write
+//  • Members (have a users/{uid} profile): read-only
+//  • Kuri data (members, cycles, payments, draws, claims): Kuri cohort only
+//  • Live quiz: every member; question unlocks at startTime, answer key at
+//    endTime, one server-timestamped submission per member inside the window
+//  • Draw results & claims are CREATE-ONLY (immutable, tamper-proof)
+// ════════════════════════════════════════════════════════════════════
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+    function signedIn()   { return request.auth != null; }
+    function userPath()   { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(userPath()); }
+    function isAdmin()    { return hasProfile() && get(userPath()).data.role == 'admin'; }
+    function isMember()   { return hasProfile(); }
+
+    // Kuri cohort (+ admins). Profiles created before the flag existed came
+    // from the Kuri roster (memberId set), so they count as Kuri members.
+    function isKuri() {
+      return hasProfile() && (
+        get(userPath()).data.role == 'admin'
+        || get(userPath()).data.get('isKuriMember', get(userPath()).data.get('memberId', null) != null) == true
+      );
+    }
+    function authPhone()  { return request.auth.token.get('phone_number', null); }
+
+    function incoming()   { return request.resource.data; }
+    function validMoney(v) { return v is number && v >= 0 && v < 100000000; }
+    function monthKey(v)  { return v is string && v.matches('^[0-9]{4}-(0[1-9]|1[0-2])$'); }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+
+      // Self-registration on first phone login: only as 'member', and only
+      // if the verified phone matches the linked Kuri or community roster record.
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && incoming().role == 'member'
+        && authPhone() != null
+        && incoming().phone == authPhone()
+        && (
+          // Kuri roster → Kuri member
+          ('memberId' in incoming()
+            && incoming().keys().hasOnly(['phone', 'name', 'role', 'memberId', 'isKuriMember', 'createdAt'])
+            && incoming().get('isKuriMember', true) == true
+            && exists(/databases/$(database)/documents/members/$(incoming().memberId))
+            && get(/databases/$(database)/documents/members/$(incoming().memberId)).data.phone == authPhone())
+          ||
+          // Community roster → registered member WITHOUT Kuri access
+          ('communityId' in incoming()
+            && incoming().keys().hasOnly(['phone', 'name', 'role', 'communityId', 'isKuriMember', 'createdAt'])
+            && incoming().isKuriMember == false
+            && exists(/databases/$(database)/documents/community/$(incoming().communityId))
+            && get(/databases/$(database)/documents/community/$(incoming().communityId)).data.phone == authPhone())
+        );
+
+      // Role / isKuriMember changes only by admins (first admin made in the console).
+      allow update, delete: if isAdmin();
+    }
+
+    // ---------- community roster (non-Kuri members who may register) ----------
+    match /community/{personId} {
+      allow read: if isAdmin()
+        || (signedIn() && authPhone() != null && resource.data.phone == authPhone());
+      allow create, update: if isAdmin()
+        && incoming().name is string && incoming().name.size() > 1
+        && incoming().phone is string && incoming().phone.matches('^\\+[0-9]{8,15}$');
+      allow delete: if isAdmin();
+    }
+
+    // ---------- server clock sync (quiz countdowns) ----------
+    match /clockSync/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && incoming().keys().hasOnly(['t'])
+        && incoming().t == request.time;
+    }
+
+    // ---------- members ----------
+    match /members/{memberId} {
+      // Unregistered user may read ONLY the record matching their own phone
+      // (needed for first-login linking).
+      allow read: if isKuri()
+        || (signedIn() && authPhone() != null && resource.data.phone == authPhone());
+
+      allow create, update: if isAdmin()
+        && incoming().name is string && incoming().name.size() > 1
+        && incoming().phone is string && incoming().phone.matches('^\\+[0-9]{8,15}$')
+        && incoming().seatNo is int
+        && incoming().isActive is bool;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- kuri cycles ----------
+    match /cycles/{cycleId} {
+      allow read: if isKuri();
+      allow create, update: if isAdmin()
+        && monthKey(incoming().startMonth)
+        && incoming().durationMonths is int && incoming().durationMonths > 0 && incoming().durationMonths <= 120
+        && validMoney(incoming().monthlyInstallment)
+        && incoming().status in ['active', 'closed'];
+      allow delete: if false;
+
+      // Monthly installment ledger. Doc id MUST be `{monthKey}_{memberId}`.
+      match /payments/{paymentId} {
+        allow read: if isKuri();
+        allow create, update: if isAdmin()
+          && monthKey(incoming().monthKey)
+          && paymentId == incoming().monthKey + '_' + incoming().memberId
+          && incoming().paid is bool
+          && validMoney(incoming().amount);
+        allow delete: if isAdmin();
+      }
+
+      // One draw per month. Immutable. Winner must be PAID for that month
+      // and must receive a matching claim in the same transaction.
+      match /draws/{drawMonth} {
+        allow read: if isKuri();
+        allow create: if isAdmin()
+          && incoming().monthKey == drawMonth
+          && monthKey(drawMonth)
+          && validMoney(incoming().amount)
+          && get(/databases/$(database)/documents/cycles/$(cycleId)/payments/$(drawMonth + '_' + incoming().winnerId)).data.paid == true
+          && existsAfter(/databases/$(database)/documents/cycles/$(cycleId)/claims/$(incoming().winnerId))
+          && getAfter(/databases/$(database)/documents/cycles/$(cycleId)/claims/$(incoming().winnerId)).data.claimedMonth == drawMonth;
+        allow update, delete: if false;
+      }
+
+      // hasClaimed = true is PERMANENT: create-only, so a previous winner
+      // can never win again in this cycle (a second create would be an update).
+      match /claims/{memberId} {
+        allow read: if isKuri();
+        allow create: if isAdmin()
+          && incoming().memberId == memberId
+          && incoming().hasClaimed == true
+          && monthKey(incoming().claimedMonth)
+          && existsAfter(/databases/$(database)/documents/cycles/$(cycleId)/draws/$(incoming().claimedMonth))
+          && getAfter(/databases/$(database)/documents/cycles/$(cycleId)/draws/$(incoming().claimedMonth)).data.winnerId == memberId;
+        allow update, delete: if false;
+      }
+    }
+
+    // Push tokens: each device writes only its own; only admins/Functions read.
+    match /deviceTokens/{token} {
+      allow create, update: if signedIn()
+        && incoming().uid == request.auth.uid
+        && incoming().keys().hasOnly(['uid', 'platform', 'updatedAt']);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow read: if isAdmin();
+    }
+
+    // ---------- live quiz (open to every registered member) ----------
+    match /quizzes/{quizId} {
+      function quizPath()  { return /databases/$(database)/documents/quizzes/$(quizId); }
+      function quiz()      { return get(quizPath()).data; }
+      function quizAfter() { return getAfter(quizPath()).data; }
+      function validSchedule(d) {
+        return d.title is string && d.title.size() > 0 && d.title.size() <= 120
+          && d.startTime is timestamp && d.endTime is timestamp
+          && d.endTime > d.startTime
+          && d.endTime <= d.startTime + duration.value(24, 'h')
+          && d.encryptedAnswer is string && d.encryptedAnswer.matches('^sha256:[0-9a-f]{64}$')
+          && d.status in ['scheduled', 'cancelled'];
+      }
+
+      allow read: if isMember();
+      // Schedule / edit / cancel only before the start time.
+      allow create: if isAdmin() && validSchedule(incoming()) && incoming().startTime > request.time;
+      allow update: if isAdmin() && (
+        (resource.data.startTime > request.time
+          && incoming().startTime > request.time
+          && validSchedule(incoming()))
+        // After the end: record the evaluated result only (fallback when no Cloud Function).
+        || (request.time >= resource.data.endTime
+          && incoming().diff(resource.data).affectedKeys().hasOnly(['result', 'status'])
+          && incoming().status == 'completed')
+      );
+      allow delete: if isAdmin() && resource.data.startTime > request.time;
+
+      // Question: hidden until the start time; frozen once it starts.
+      match /content/{docId} {
+        allow read: if isAdmin() || (isMember() && request.time >= quiz().startTime);
+        allow create, update: if isAdmin() && request.time < quizAfter().startTime;
+        allow delete: if isAdmin() && request.time < quiz().startTime;
+      }
+
+      // Answer key + salt: hidden until the END time; frozen once it starts.
+      // The SHA-256 seal on the quiz doc lets anyone verify it afterwards.
+      match /secret/{docId} {
+        allow read: if isAdmin() || (isMember() && request.time >= quiz().endTime);
+        allow create, update: if isAdmin() && request.time < quizAfter().startTime;
+        allow delete: if isAdmin() && request.time < quiz().startTime;
+      }
+
+      // One answer per member, stamped with SERVER time, only inside the window.
+      // Hosts (admins) know the answer, so they cannot submit.
+      match /submissions/{uid} {
+        allow read: if isAdmin()
+          || (signedIn() && request.auth.uid == uid)
+          || (isMember() && request.time >= quiz().endTime);
+        allow create: if isMember() && !isAdmin()
+          && request.auth.uid == uid
+          && quiz().status == 'scheduled'
+          && request.time >= quiz().startTime
+          && request.time < quiz().endTime
+          && incoming().keys().hasOnly(['userId', 'userName', 'submittedAnswer', 'submittedAt'])
+          && incoming().userId == uid
+          && incoming().userName == get(userPath()).data.name
+          && incoming().submittedAnswer is string
+          && incoming().submittedAnswer.size() > 0
+          && incoming().submittedAnswer.size() <= 200
+          && incoming().submittedAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- tour & party wallet ----------
+    match /events/{eventId} {
+      allow read: if isMember();
+      allow create, update: if isAdmin()
+        && incoming().title is string && incoming().title.size() > 0
+        && validMoney(incoming().perHeadTarget);
+      allow delete: if isAdmin();
+
+      match /{entryType}/{entryId} {
+        allow read: if isMember();
+        allow create, update: if isAdmin()
+          && entryType in ['contributions', 'expenses', 'transfers']
+          && validMoney(incoming().amount) && incoming().amount > 0;
+        allow delete: if isAdmin() && entryType in ['contributions', 'expenses', 'transfers'];
+      }
+
+      // ── Auto-split: trip participants ──
+      // My participant id = my Kuri roster id, else my community roster id.
+      function myParticipantId() {
+        return get(userPath()).data.get('memberId', get(userPath()).data.get('communityId', '-'));
+      }
+      function participantPath(pid) {
+        return /databases/$(database)/documents/events/$(eventId)/participants/$(pid);
+      }
+      function isActiveParticipant() {
+        return exists(participantPath(myParticipantId()))
+          && get(participantPath(myParticipantId())).data.active == true;
+      }
+
+      match /participants/{pid} {
+        // Read is covered by the wildcard above (all members).
+        // Admin manages everyone; adding / removing re-splits every bill.
+        allow create, update: if isAdmin()
+          && incoming().name is string && incoming().name.size() > 0
+          && incoming().kind in ['kuri', 'community', 'guest']
+          && incoming().active is bool;
+        allow delete: if isAdmin();
+        // A roster member may join a trip themselves (cannot remove themselves).
+        allow create: if isMember()
+          && pid == myParticipantId()
+          && incoming().keys().hasOnly(['name', 'kind', 'active', 'joinedAt', 'addedBy'])
+          && incoming().name == get(userPath()).data.name
+          && incoming().kind in ['kuri', 'community']
+          && incoming().active == true
+          && incoming().joinedAt == request.time
+          && incoming().addedBy == request.auth.uid;
+      }
+
+      // Active participants may log bills paid by any participant, and delete
+      // bills they logged themselves. (Admins: wildcard rule above.)
+      match /expenses/{expenseId} {
+        allow create: if isMember()
+          && isActiveParticipant()
+          && incoming().createdBy == request.auth.uid
+          && validMoney(incoming().amount) && incoming().amount > 0
+          && incoming().paidById is string
+          && exists(participantPath(incoming().paidById))
+          && incoming().description is string && incoming().description.size() > 0;
+        allow delete: if isMember() && resource.data.createdBy == request.auth.uid;
+      }
+    }
+
+    // Everything else: denied by default.
+  }
+}
