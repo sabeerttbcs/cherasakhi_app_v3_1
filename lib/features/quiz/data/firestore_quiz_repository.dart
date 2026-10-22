@@ -18,14 +18,20 @@ class FirestoreQuizRepository implements QuizRepository {
   final FirebaseFirestore _db;
 
   CollectionReference<Json> get _quizzes => _db.collection('quizzes');
-  DocumentReference<Json> _content(String id) => _quizzes.doc(id).collection('content').doc('question');
-  DocumentReference<Json> _secret(String id) => _quizzes.doc(id).collection('secret').doc('answer');
-  CollectionReference<Json> _submissions(String id) => _quizzes.doc(id).collection('submissions');
+  DocumentReference<Json> _content(String id) =>
+      _quizzes.doc(id).collection('content').doc('question');
+  DocumentReference<Json> _secret(String id) =>
+      _quizzes.doc(id).collection('secret').doc('answer');
+  CollectionReference<Json> _submissions(String id) =>
+      _quizzes.doc(id).collection('submissions');
 
-  static int _micros(Object? v) => v is Timestamp ? v.seconds * 1000000 + v.nanoseconds ~/ 1000 : 0;
+  static int _micros(Object? v) =>
+      v is Timestamp ? v.seconds * 1000000 + v.nanoseconds ~/ 1000 : 0;
 
   static Never _guard(Object e) {
-    if (e is FirebaseException && e.code == 'permission-denied') throw const QuizPermissionDenied();
+    if (e is FirebaseException && e.code == 'permission-denied') {
+      throw const QuizPermissionDenied();
+    }
     throw e;
   }
 
@@ -38,11 +44,14 @@ class FirestoreQuizRepository implements QuizRepository {
       id: d.id,
       title: asString(m['title'], 'Live Quiz'),
       category: asString(m['category']),
-      startTime: tsToDate(m['startTime']) ?? DateTime.fromMillisecondsSinceEpoch(0),
+      startTime:
+          tsToDate(m['startTime']) ?? DateTime.fromMillisecondsSinceEpoch(0),
       endTime: tsToDate(m['endTime']) ?? DateTime.fromMillisecondsSinceEpoch(0),
       encryptedAnswer: asString(m['encryptedAnswer']),
-      answerMode: m['answerMode'] == 'options' ? AnswerMode.options : AnswerMode.text,
-      status: QuizStatus.values.asNameMap()[m['status']] ?? QuizStatus.scheduled,
+      answerMode:
+          m['answerMode'] == 'options' ? AnswerMode.options : AnswerMode.text,
+      status:
+          QuizStatus.values.asNameMap()[m['status']] ?? QuizStatus.scheduled,
       optionCount: asInt(m['optionCount']),
       createdBy: m['createdBy'] as String?,
       createdAt: tsToDate(m['createdAt']),
@@ -54,7 +63,9 @@ class FirestoreQuizRepository implements QuizRepository {
               winnerId: r['winnerId'] as String?,
               winnerName: r['winnerName'] as String?,
               winnerAnswer: r['winnerAnswer'] as String?,
-              winnerSubmittedAtMicros: r['winnerSubmittedAt'] == null ? null : _micros(r['winnerSubmittedAt']),
+              winnerSubmittedAtMicros: r['winnerSubmittedAt'] == null
+                  ? null
+                  : _micros(r['winnerSubmittedAt']),
               evaluatedBy: r['evaluatedBy'] as String?,
             )
           : null,
@@ -69,16 +80,46 @@ class FirestoreQuizRepository implements QuizRepository {
       .map((s) => s.docs.map(_contestFromDoc).toList(growable: false));
 
   @override
-  Stream<QuizContest?> watchContest(String quizId) =>
-      _quizzes.doc(quizId).snapshots().map((d) => d.exists ? _contestFromDoc(d) : null);
+  Future<List<QuizContest>> fetchContestsInRange(
+      {required DateTime start, required DateTime end}) async {
+    final contests = <QuizContest>[];
+    DocumentSnapshot<Json>? cursor;
+    while (true) {
+      Query<Json> query = _quizzes
+          .where('startTime',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(start.toUtc()))
+          .where('startTime', isLessThan: Timestamp.fromDate(end.toUtc()))
+          .orderBy('startTime')
+          .limit(100);
+      if (cursor != null) query = query.startAfterDocument(cursor);
+      final page = await query.get(const GetOptions(source: Source.server));
+      contests.addAll(page.docs.map(_contestFromDoc));
+      if (page.docs.length < 100) break;
+      cursor = page.docs.last;
+    }
+    return contests;
+  }
 
   @override
-  Future<String> scheduleContest({String? quizId, required QuizDraft draft, required String adminUid}) async {
+  Stream<QuizContest?> watchContest(String quizId) => _quizzes
+      .doc(quizId)
+      .snapshots()
+      .map((d) => d.exists ? _contestFromDoc(d) : null);
+
+  @override
+  Future<String> scheduleContest(
+      {String? quizId,
+      required QuizDraft draft,
+      required String adminUid}) async {
     final ref = quizId == null ? _quizzes.doc() : _quizzes.doc(quizId);
 
     final salt = generateSalt();
-    final options = draft.options.map((o) => o.trim()).where((o) => o.isNotEmpty).toList();
-    final accepted = draft.acceptedAnswers.map((a) => a.trim()).where((a) => a.isNotEmpty).toList();
+    final options =
+        draft.options.map((o) => o.trim()).where((o) => o.isNotEmpty).toList();
+    final accepted = draft.acceptedAnswers
+        .map((a) => a.trim())
+        .where((a) => a.isNotEmpty)
+        .toList();
 
     final batch = _db.batch();
     batch.set(
@@ -116,8 +157,8 @@ class FirestoreQuizRepository implements QuizRepository {
   }
 
   @override
-  Future<void> cancelContest(String quizId) =>
-      _quizzes.doc(quizId).update({'status': 'cancelled', 'updatedAt': FieldValue.serverTimestamp()});
+  Future<void> cancelContest(String quizId) => _quizzes.doc(quizId).update(
+      {'status': 'cancelled', 'updatedAt': FieldValue.serverTimestamp()});
 
   @override
   Future<void> deleteContest(String quizId) async {
@@ -133,11 +174,13 @@ class FirestoreQuizRepository implements QuizRepository {
   @override
   Future<QuizQuestion> fetchQuestion(String quizId) async {
     try {
-      final d = await _content(quizId).get(const GetOptions(source: Source.server));
+      final d =
+          await _content(quizId).get(const GetOptions(source: Source.server));
       final m = d.data() ?? const <String, dynamic>{};
       return QuizQuestion(
         text: asString(m['text']),
-        options: (m['options'] as List?)?.whereType<String>().toList() ?? const [],
+        options:
+            (m['options'] as List?)?.whereType<String>().toList() ?? const [],
       );
     } catch (e) {
       _guard(e);
@@ -147,11 +190,14 @@ class FirestoreQuizRepository implements QuizRepository {
   @override
   Future<QuizSecret> fetchSecret(String quizId) async {
     try {
-      final d = await _secret(quizId).get(const GetOptions(source: Source.server));
+      final d =
+          await _secret(quizId).get(const GetOptions(source: Source.server));
       final m = d.data() ?? const <String, dynamic>{};
       return QuizSecret(
         answer: asString(m['answer']),
-        acceptedAnswers: (m['acceptedAnswers'] as List?)?.whereType<String>().toList() ?? const [],
+        acceptedAnswers:
+            (m['acceptedAnswers'] as List?)?.whereType<String>().toList() ??
+                const [],
         salt: asString(m['salt']),
       );
     } catch (e) {
@@ -173,10 +219,11 @@ class FirestoreQuizRepository implements QuizRepository {
   }
 
   @override
-  Stream<QuizSubmission?> watchMySubmission(String quizId, String uid) => _submissions(quizId)
-      .doc(uid)
-      .snapshots(includeMetadataChanges: true)
-      .map((d) => d.exists ? _submissionFromDoc(d) : null);
+  Stream<QuizSubmission?> watchMySubmission(String quizId, String uid) =>
+      _submissions(quizId)
+          .doc(uid)
+          .snapshots(includeMetadataChanges: true)
+          .map((d) => d.exists ? _submissionFromDoc(d) : null);
 
   @override
   Future<void> submitAnswer({
@@ -190,7 +237,8 @@ class FirestoreQuizRepository implements QuizRepository {
         'userId': uid,
         'userName': userName,
         'submittedAnswer': answer.trim(),
-        'submittedAt': FieldValue.serverTimestamp(), // server clock, µs precision
+        'submittedAt':
+            FieldValue.serverTimestamp(), // server clock, µs precision
       });
     } catch (e) {
       _guard(e);
@@ -200,7 +248,8 @@ class FirestoreQuizRepository implements QuizRepository {
   @override
   Future<List<QuizSubmission>> fetchSubmissions(String quizId) async {
     try {
-      final s = await _submissions(quizId).get(const GetOptions(source: Source.server));
+      final s = await _submissions(quizId)
+          .get(const GetOptions(source: Source.server));
       return s.docs.map(_submissionFromDoc).toList(growable: false);
     } catch (e) {
       _guard(e);
@@ -208,10 +257,12 @@ class FirestoreQuizRepository implements QuizRepository {
   }
 
   @override
-  Stream<int> watchSubmissionCount(String quizId) => _submissions(quizId).snapshots().map((s) => s.size);
+  Stream<int> watchSubmissionCount(String quizId) =>
+      _submissions(quizId).snapshots().map((s) => s.size);
 
   @override
-  Future<void> saveResult(String quizId, QuizResult r) => _quizzes.doc(quizId).update({
+  Future<void> saveResult(String quizId, QuizResult r) =>
+      _quizzes.doc(quizId).update({
         'status': 'completed',
         'result': {
           'correctAnswer': r.correctAnswer,
@@ -222,7 +273,8 @@ class FirestoreQuizRepository implements QuizRepository {
           'winnerAnswer': r.winnerAnswer,
           'winnerSubmittedAt': r.winnerSubmittedAtMicros == null
               ? null
-              : Timestamp(r.winnerSubmittedAtMicros! ~/ 1000000, (r.winnerSubmittedAtMicros! % 1000000) * 1000),
+              : Timestamp(r.winnerSubmittedAtMicros! ~/ 1000000,
+                  (r.winnerSubmittedAtMicros! % 1000000) * 1000),
           'evaluatedBy': r.evaluatedBy ?? 'admin',
           'evaluatedAt': FieldValue.serverTimestamp(),
         },

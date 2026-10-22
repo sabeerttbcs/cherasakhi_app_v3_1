@@ -14,6 +14,7 @@ import '../providers/quiz_providers.dart';
 import '../widgets/quiz_format.dart';
 import 'live_quiz_screen.dart';
 import 'quiz_scheduler_screen.dart';
+import 'quiz_reports_screen.dart';
 
 /// Live Quiz tab — open to every registered member.
 class QuizHubScreen extends ConsumerWidget {
@@ -32,7 +33,8 @@ class QuizHubScreen extends ConsumerWidget {
               heroTag: 'schedule-quiz',
               backgroundColor: AppColors.roseGold,
               foregroundColor: Colors.white,
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuizSchedulerScreen())),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const QuizSchedulerScreen())),
               icon: const Icon(Icons.add_alarm_rounded),
               label: const Text('Schedule quiz'),
             )
@@ -46,46 +48,80 @@ class QuizHubScreen extends ConsumerWidget {
                 floating: true,
                 snap: true,
                 toolbarHeight: 72,
-                backgroundColor: theme.scaffoldBackgroundColor.withOpacity(0.92),
+                backgroundColor:
+                    theme.scaffoldBackgroundColor.withOpacity(0.92),
                 title: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Live Quiz', style: theme.textTheme.headlineSmall),
-                    Text('Fastest Finger First · open to all members', style: theme.textTheme.bodySmall),
+                    Text('Fastest Finger First · open to all members',
+                        style: theme.textTheme.bodySmall),
                   ],
                 ),
                 actions: const [
                   RefreshActionButton(),
                   SizedBox(width: 8),
-                  Padding(padding: EdgeInsets.only(right: 12), child: ProfileMenuButton()),
+                  Padding(
+                      padding: EdgeInsets.only(right: 12),
+                      child: ProfileMenuButton()),
                 ],
               ),
               ...contests.when<List<Widget>>(
-                loading: () => [const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))],
+                loading: () => [
+                  const SliverFillRemaining(
+                      child: Center(child: CircularProgressIndicator()))
+                ],
                 error: (e, _) => [
                   SliverFillRemaining(
-                    child: EmptyState(icon: Icons.cloud_off_rounded, title: 'Could not load quizzes', message: '$e'),
+                    child: EmptyState(
+                        icon: Icons.cloud_off_rounded,
+                        title: 'Could not load quizzes',
+                        message: '$e'),
                   ),
                 ],
                 data: (all) {
-                  final visible = isAdmin ? all : all.where((c) => c.status != QuizStatus.cancelled).toList();
-                  final live = visible.where((c) => c.phaseAt(now) == QuizPhase.live).toList();
-                  final upcoming = visible.where((c) => c.phaseAt(now) == QuizPhase.scheduled).toList()
+                  final visible = isAdmin
+                      ? all
+                      : all
+                          .where((c) => c.status != QuizStatus.cancelled)
+                          .toList();
+                  final live = visible
+                      .where((c) => c.phaseAt(now) == QuizPhase.live)
+                      .toList();
+                  final upcoming = visible
+                      .where((c) => c.phaseAt(now) == QuizPhase.scheduled)
+                      .toList()
                     ..sort((a, b) => a.startTime.compareTo(b.startTime));
                   final past = visible
-                      .where((c) => c.phaseAt(now) == QuizPhase.ended || c.phaseAt(now) == QuizPhase.cancelled)
+                      .where((c) =>
+                          c.phaseAt(now) == QuizPhase.ended ||
+                          c.phaseAt(now) == QuizPhase.cancelled)
                       .toList();
                   if (visible.isEmpty) {
                     return [
                       SliverFillRemaining(
                         hasScrollBody: false,
-                        child: EmptyState(
-                          icon: Icons.quiz_rounded,
-                          title: 'No quizzes yet',
-                          message: isAdmin
-                              ? 'Schedule the first live quiz for the community.'
-                              : 'You will be notified when the next quiz is scheduled.',
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            EmptyState(
+                              icon: Icons.quiz_rounded,
+                              title: 'No quizzes yet',
+                              message: isAdmin
+                                  ? 'Schedule the first live quiz for the community.'
+                                  : 'You will be notified when the next quiz is scheduled.',
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const QuizReportsScreen()),
+                              ),
+                              icon: const Icon(Icons.leaderboard_rounded),
+                              label: const Text('QUIZ LEADERBOARD & REPORTS'),
+                            ),
+                          ],
                         ),
                       ),
                     ];
@@ -95,17 +131,32 @@ class QuizHubScreen extends ConsumerWidget {
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
                       sliver: SliverList.list(
                         children: [
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => const QuizReportsScreen()),
+                            ),
+                            icon: const Icon(Icons.leaderboard_rounded),
+                            label: const Text('QUIZ LEADERBOARD & REPORTS'),
+                          ),
+                          const SizedBox(height: 16),
                           if (live.isNotEmpty) ...[
                             const SectionHeader('Live now'),
-                            for (final c in live) _ContestCard(contest: c, now: now, isAdmin: isAdmin),
+                            for (final c in live)
+                              _ContestCard(
+                                  contest: c, now: now, isAdmin: isAdmin),
                           ],
                           if (upcoming.isNotEmpty) ...[
                             const SectionHeader('Upcoming'),
-                            for (final c in upcoming) _ContestCard(contest: c, now: now, isAdmin: isAdmin),
+                            for (final c in upcoming)
+                              _ContestCard(
+                                  contest: c, now: now, isAdmin: isAdmin),
                           ],
                           if (past.isNotEmpty) ...[
                             const SectionHeader('Results'),
-                            for (final c in past) _ContestCard(contest: c, now: now, isAdmin: isAdmin),
+                            for (final c in past)
+                              _ContestCard(
+                                  contest: c, now: now, isAdmin: isAdmin),
                           ],
                         ],
                       ),
@@ -122,7 +173,8 @@ class QuizHubScreen extends ConsumerWidget {
 }
 
 class _ContestCard extends ConsumerWidget {
-  const _ContestCard({required this.contest, required this.now, required this.isAdmin});
+  const _ContestCard(
+      {required this.contest, required this.now, required this.isAdmin});
 
   final QuizContest contest;
   final DateTime now;
@@ -135,8 +187,10 @@ class _ContestCard extends ConsumerWidget {
     final r = contest.result;
 
     final subtitle = switch (phase) {
-      QuizPhase.live => 'LIVE · ends in ${formatCountdown(contest.endTime.difference(now))}',
-      QuizPhase.scheduled => 'Starts in ${formatCountdown(contest.startTime.difference(now))}',
+      QuizPhase.live =>
+        'LIVE · ends in ${formatCountdown(contest.endTime.difference(now))}',
+      QuizPhase.scheduled =>
+        'Starts in ${formatCountdown(contest.startTime.difference(now))}',
       QuizPhase.cancelled => 'Cancelled',
       QuizPhase.ended => r == null
           ? 'Ended · tap to see the result'
@@ -150,13 +204,17 @@ class _ContestCard extends ConsumerWidget {
       child: GlassCard(
         blur: false,
         gradient: isLive
-            ? const LinearGradient(colors: [Color(0xFF7A1A4A), Color(0xFF4A0E2E)], begin: Alignment.topLeft, end: Alignment.bottomRight)
+            ? const LinearGradient(
+                colors: [Color(0xFF7A1A4A), Color(0xFF4A0E2E)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight)
             : null,
         borderColor: isLive ? AppColors.roseGoldLight : null,
         padding: const EdgeInsets.all(16),
         onTap: phase == QuizPhase.cancelled
             ? null
-            : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => LiveQuizScreen(quizId: contest.id))),
+            : () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => LiveQuizScreen(quizId: contest.id))),
         child: Row(
           children: [
             Container(
@@ -189,13 +247,19 @@ class _ContestCard extends ConsumerWidget {
                     style: quizTextStyle(
                       size: 16,
                       weight: FontWeight.w700,
-                      color: isLive ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                      color: isLive
+                          ? Colors.white
+                          : Theme.of(context).colorScheme.onSurface,
                       height: 1.35,
                     ),
                   ),
                   Text(
                     '${contest.category.isEmpty ? '' : '${contest.category} · '}${formatSchedule(contest.startTime)}',
-                    style: TextStyle(fontSize: 11.5, color: isLive ? Colors.white60 : Theme.of(context).textTheme.bodySmall?.color),
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        color: isLive
+                            ? Colors.white60
+                            : Theme.of(context).textTheme.bodySmall?.color),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -203,7 +267,8 @@ class _ContestCard extends ConsumerWidget {
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 12.5,
-                      color: isLive ? AppColors.roseGoldPale : AppColors.roseGold,
+                      color:
+                          isLive ? AppColors.roseGoldPale : AppColors.roseGold,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
@@ -220,30 +285,38 @@ class _ContestCard extends ConsumerWidget {
                 ],
               )
             else
-              Icon(Icons.chevron_right_rounded, color: isLive ? Colors.white70 : null),
+              Icon(Icons.chevron_right_rounded,
+                  color: isLive ? Colors.white70 : null),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _adminAction(BuildContext context, WidgetRef ref, String action) async {
+  Future<void> _adminAction(
+      BuildContext context, WidgetRef ref, String action) async {
     final repo = ref.read(quizRepositoryProvider);
     final messenger = ScaffoldMessenger.of(context);
     if (action == 'edit') {
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => QuizSchedulerScreen(existing: contest)));
+      await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => QuizSchedulerScreen(existing: contest)));
       return;
     }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (d) => AlertDialog(
-        title: Text(action == 'cancel' ? 'Cancel this quiz?' : 'Delete this quiz?'),
+        title: Text(
+            action == 'cancel' ? 'Cancel this quiz?' : 'Delete this quiz?'),
         content: Text(action == 'cancel'
             ? 'Members will see it as cancelled.'
             : 'The quiz, its question and answer key are removed permanently.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Keep')),
-          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Yes')),
+          TextButton(
+              onPressed: () => Navigator.pop(d, false),
+              child: const Text('Keep')),
+          FilledButton(
+              onPressed: () => Navigator.pop(d, true),
+              child: const Text('Yes')),
         ],
       ),
     );

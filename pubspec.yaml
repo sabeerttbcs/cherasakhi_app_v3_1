@@ -23,6 +23,8 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   web: ^1.1.0
   crypto: ^3.0.6
+  pdf: ^3.11.3
+  printing: ^5.13.4
 
 dev_dependencies:
   flutter_test:
@@ -35,6 +37,7 @@ flutter:
   assets:
     - assets/sounds/
     - assets/brand/
+    - assets/fonts/
 
 # App icon: run `dart run flutter_launcher_icons`
 flutter_launcher_icons:

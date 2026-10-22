@@ -12,10 +12,13 @@ class QuizPermissionDenied implements Exception {
 
 abstract interface class QuizRepository {
   Stream<List<QuizContest>> watchContests();
+  Future<List<QuizContest>> fetchContestsInRange(
+      {required DateTime start, required DateTime end});
   Stream<QuizContest?> watchContest(String quizId);
 
   /// Create (id == null) or edit before start. Seals the answer.
-  Future<String> scheduleContest({String? quizId, required QuizDraft draft, required String adminUid});
+  Future<String> scheduleContest(
+      {String? quizId, required QuizDraft draft, required String adminUid});
   Future<void> cancelContest(String quizId);
   Future<void> deleteContest(String quizId);
 

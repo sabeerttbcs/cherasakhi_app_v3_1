@@ -227,6 +227,39 @@ service cloud.firestore {
       }
     }
 
+    // ---------- quiz prize confirmations ----------
+    // Publicly readable after confirmation; contains no private member data.
+    match /quizPrizes/{month} {
+      allow read: if isMember();
+      allow create, update: if isAdmin()
+        && monthKey(month)
+        && incoming().keys().hasOnly(['monthKey', 'criterion', 'recipientUid', 'recipientName', 'photoUrl', 'confirmedAt'])
+        && incoming().monthKey == month
+        && incoming().criterion in ['mostCorrect', 'mostParticipation', 'mostDailyWins']
+        && incoming().recipientUid is string
+        && incoming().recipientUid.size() > 0
+        && incoming().recipientName is string
+        && incoming().recipientName.size() > 0
+        && incoming().photoUrl is string
+        && (incoming().photoUrl == '' || incoming().photoUrl.matches('^https://'))
+        && incoming().confirmedAt is timestamp;
+      allow delete: if false;
+    }
+
+    // One congratulation per signed-in member for each confirmed monthly winner.
+    // The deterministic id prevents duplicate writes without storing phone data.
+    match /quizPrizeCongratulations/{congratulationId} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && congratulationId == incoming().monthKey + '_' + request.auth.uid
+        && incoming().keys().hasOnly(['monthKey', 'uid', 'createdAt'])
+        && monthKey(incoming().monthKey)
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/quizPrizes/$(incoming().monthKey));
+      allow update, delete: if false;
+    }
+
     // ---------- tour & party wallet ----------
     match /events/{eventId} {
       allow read: if isMember();

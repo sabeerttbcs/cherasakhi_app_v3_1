@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/providers/firebase_providers.dart';
 import '../../data/firestore_quiz_repository.dart';
+import '../../data/quiz_report_repository.dart';
 import '../../data/server_clock.dart';
 import '../../domain/entities/quiz_models.dart';
 import '../../domain/repositories/quiz_repository.dart';
@@ -9,6 +10,21 @@ import '../../domain/repositories/quiz_repository.dart';
 final quizRepositoryProvider = Provider<QuizRepository>(
   (ref) => FirestoreQuizRepository(ref.watch(firestoreProvider)),
 );
+
+final quizReportRepositoryProvider = Provider<QuizReportRepository>(
+  (ref) => QuizReportRepository(
+    ref.watch(firestoreProvider),
+    ref.watch(quizRepositoryProvider),
+  ),
+);
+
+final latestMonthlyChampionProvider =
+    FutureProvider<QuizPrizeSelection?>((ref) {
+  return ref.watch(quizReportRepositoryProvider).fetchLatestPrize();
+});
+
+final monthlyChampionShownProvider =
+    StateProvider.autoDispose<bool>((ref) => false);
 
 /// Synced once per sign-in; every quiz countdown uses it.
 final serverClockProvider = FutureProvider<ServerClock>((ref) async {
@@ -33,14 +49,16 @@ final quizContestsProvider = StreamProvider<List<QuizContest>>((ref) {
 /// The contest to feature on the home banner: live now, else the next one
 /// starting within 30 minutes.
 final featuredQuizProvider = Provider.autoDispose<QuizContest?>((ref) {
-  final list = ref.watch(quizContestsProvider).valueOrNull ?? const <QuizContest>[];
+  final list =
+      ref.watch(quizContestsProvider).valueOrNull ?? const <QuizContest>[];
   final now = ref.watch(serverNowProvider).valueOrNull;
   if (now == null) return null;
   QuizContest? soon;
   for (final c in list) {
     final phase = c.phaseAt(now);
     if (phase == QuizPhase.live) return c;
-    if (phase == QuizPhase.scheduled && c.startTime.difference(now) <= const Duration(minutes: 30)) {
+    if (phase == QuizPhase.scheduled &&
+        c.startTime.difference(now) <= const Duration(minutes: 30)) {
       if (soon == null || c.startTime.isBefore(soon.startTime)) soon = c;
     }
   }
