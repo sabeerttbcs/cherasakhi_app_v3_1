@@ -10,6 +10,7 @@ import '../../../core/widgets/glass_card.dart';
 import '../../../core/widgets/gold_button.dart';
 import '../../../core/widgets/member_avatar.dart';
 import '../domain/community_models.dart';
+import 'contact_picker.dart';
 import 'community_providers.dart';
 
 /// Admin: invite-only access, community roster, and Kuri access.
@@ -31,7 +32,8 @@ class CommunityAdminScreen extends StatelessWidget {
             ],
           ),
         ),
-        body: const TabBarView(children: [_InvitationsTab(), _RosterTab(), _AccessTab()]),
+        body: const TabBarView(
+            children: [_InvitationsTab(), _RosterTab(), _AccessTab()]),
       ),
     );
   }
@@ -54,12 +56,16 @@ class _InvitationsTab extends ConsumerWidget {
       ),
       body: invitations.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => EmptyState(icon: Icons.error_outline, title: 'Could not load invitations', message: '$e'),
+        error: (e, _) => EmptyState(
+            icon: Icons.error_outline,
+            title: 'Could not load invitations',
+            message: '$e'),
         data: (list) => list.isEmpty
             ? const EmptyState(
                 icon: Icons.mail_lock_rounded,
                 title: 'No invitations yet',
-                message: 'Create an invite to let a member create a password and sign in with their phone number.',
+                message:
+                    'Create an invite to let a member create a password and sign in with their phone number.',
               )
             : ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -82,36 +88,126 @@ class _InvitationsTab extends ConsumerWidget {
       showDragHandle: true,
       useSafeArea: true,
       builder: (sheet) => Padding(
-        padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
+        padding: EdgeInsets.fromLTRB(
+            20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
         child: Form(
           key: formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Add member & create invite', style: Theme.of(sheet).textTheme.titleLarge),
+              Text('Add member & create invite',
+                  style: Theme.of(sheet).textTheme.titleLarge),
               const SizedBox(height: 16),
-              TextFormField(controller: name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Full name', prefixIcon: Icon(Icons.person_rounded)), validator: (v) => (v == null || v.trim().length < 2) ? 'Enter a name' : null),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  if (!contactPickerSupported) {
+                    await _showContactFallback(sheet);
+                    return;
+                  }
+                  final contact = await pickContact();
+                  if (!sheet.mounted || contact == null) return;
+                  if (contact.name.isNotEmpty) name.text = contact.name;
+                  final phoneNumber =
+                      await _choosePhoneNumber(sheet, contact.phoneNumbers);
+                  if (phoneNumber != null) {
+                    phone.text = normalizePhone(phoneNumber);
+                  }
+                },
+                icon: const Icon(Icons.contacts_rounded),
+                label: const Text('CHOOSE FROM CONTACTS'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                contactPickerSupported
+                    ? 'Android Chrome can share one selected contact only.'
+                    : 'On iPhone, tap a field and use Safari Contact AutoFill if it is offered. Otherwise paste the number below.',
+                style: Theme.of(sheet).textTheme.bodySmall,
+              ),
               const SizedBox(height: 12),
-              TextFormField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone / WhatsApp number', prefixIcon: Icon(Icons.phone_rounded)), validator: (v) => normalizePhone(v ?? '').length < 11 ? 'Enter a valid number' : null),
+              AutofillGroup(
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: name,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.name],
+                      decoration: const InputDecoration(
+                          labelText: 'Full name',
+                          prefixIcon: Icon(Icons.person_rounded)),
+                      validator: (v) => (v == null || v.trim().length < 2)
+                          ? 'Enter a name'
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: phone,
+                      keyboardType: TextInputType.phone,
+                      autofillHints: const [AutofillHints.telephoneNumber],
+                      onEditingComplete: () {
+                        _normalisePhoneController(phone);
+                        FocusScope.of(sheet).unfocus();
+                      },
+                      decoration: const InputDecoration(
+                        labelText: 'Phone / WhatsApp number',
+                        helperText:
+                            'Paste a number; it is normalized to E.164 when you continue.',
+                        prefixIcon: Icon(Icons.phone_rounded),
+                      ),
+                      validator: (v) => normalizePhone(v ?? '').length < 11
+                          ? 'Enter a valid number'
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
-              TextFormField(controller: note, decoration: const InputDecoration(labelText: 'Note (optional)', prefixIcon: Icon(Icons.notes_rounded)), maxLines: 2),
+              TextFormField(
+                  controller: note,
+                  decoration: const InputDecoration(
+                      labelText: 'Note (optional)',
+                      prefixIcon: Icon(Icons.notes_rounded)),
+                  maxLines: 2),
+              const SizedBox(height: 8),
+              Text(
+                'Only the contact you choose is read. CheraSakhi never uploads or syncs your contacts.',
+                style: Theme.of(sheet).textTheme.bodySmall,
+              ),
               const SizedBox(height: 20),
               GoldButton(
                 label: 'CREATE WHATSAPP INVITE',
                 icon: Icons.send_rounded,
                 expand: true,
                 onPressed: () async {
+                  _normalisePhoneController(phone);
                   if (!formKey.currentState!.validate()) return;
+                  final confirmed = await _confirmInvite(
+                    sheet,
+                    name: name.text.trim(),
+                    phone: normalizePhone(phone.text),
+                    note: note.text.trim(),
+                  );
+                  if (!confirmed || !sheet.mounted) return;
                   final messenger = ScaffoldMessenger.of(context);
                   try {
-                    final token = await ref.read(communityRepositoryProvider).createInvitation(name: name.text, phone: phone.text, note: note.text);
+                    final token = await ref
+                        .read(communityRepositoryProvider)
+                        .createInvitation(
+                            name: name.text,
+                            phone: phone.text,
+                            note: note.text);
                     final link = 'https://sakhi.sabeerlabs.com/?invite=$token';
-                    await WhatsAppLauncher.send(phone: normalizePhone(phone.text), message: 'Hello ${name.text.trim()} 🌸\n\nYou are invited to CheraSakhi. Create your password here:\n$link\n\nThis one-time invitation expires in 7 days.');
+                    await WhatsAppLauncher.send(
+                        phone: normalizePhone(phone.text),
+                        message:
+                            'Hello ${name.text.trim()} 🌸\n\nYou are invited to CheraSakhi. Create your password here:\n$link\n\nThis one-time invitation expires in 7 days.');
                     if (context.mounted) Navigator.of(sheet).pop();
-                    messenger.showSnackBar(const SnackBar(content: Text('Invitation created and WhatsApp opened.')));
+                    messenger.showSnackBar(const SnackBar(
+                        content:
+                            Text('Invitation created and WhatsApp opened.')));
                   } catch (e) {
-                    messenger.showSnackBar(SnackBar(content: Text('Could not create invitation: $e')));
+                    messenger.showSnackBar(SnackBar(
+                        content: Text('Could not create invitation: $e')));
                   }
                 },
               ),
@@ -120,6 +216,103 @@ class _InvitationsTab extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  static void _normalisePhoneController(TextEditingController controller) {
+    final value = controller.text.trim();
+    if (value.isEmpty) return;
+    final normalized = normalizePhone(value);
+    if (normalized.length < 11 || normalized == value) return;
+    controller.value = TextEditingValue(
+        text: normalized,
+        selection: TextSelection.collapsed(offset: normalized.length));
+  }
+
+  static Future<String?> _choosePhoneNumber(
+      BuildContext context, List<String> numbers) async {
+    final choices = numbers
+        .map(normalizePhone)
+        .where((number) => number.length >= 11)
+        .toSet()
+        .toList();
+    if (choices.length <= 1) return choices.isEmpty ? null : choices.first;
+    return showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Choose a WhatsApp number'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: choices
+              .map((number) => ListTile(
+                    leading: const Icon(Icons.phone_rounded),
+                    title: Text(number),
+                    onTap: () => Navigator.of(dialog).pop(number),
+                  ))
+              .toList(),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(dialog).pop(),
+              child: const Text('CANCEL'))
+        ],
+      ),
+    );
+  }
+
+  static Future<void> _showContactFallback(BuildContext context) =>
+      showDialog<void>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: const Text('Contact selection unavailable'),
+          content: const Text(
+            'This browser does not provide a direct contact picker. On iPhone Safari, tap Full name or Phone / WhatsApp number and choose a saved contact suggestion if Safari offers it. You can also paste the number; it will be normalized automatically.',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(dialog).pop(),
+                child: const Text('OK'))
+          ],
+        ),
+      );
+
+  static Future<bool> _confirmInvite(
+    BuildContext context, {
+    required String name,
+    required String phone,
+    required String note,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Confirm member details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Full name', style: Theme.of(dialog).textTheme.labelMedium),
+            Text(name),
+            const SizedBox(height: 12),
+            Text('WhatsApp number',
+                style: Theme.of(dialog).textTheme.labelMedium),
+            Text(phone),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Note', style: Theme.of(dialog).textTheme.labelMedium),
+              Text(note),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(dialog).pop(false),
+              child: const Text('EDIT')),
+          FilledButton(
+              onPressed: () => Navigator.of(dialog).pop(true),
+              child: const Text('CREATE INVITE')),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 }
 
@@ -130,7 +323,9 @@ class _InvitationTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final status = invitation.isPending ? 'Pending · expires ${formatDate(invitation.expiresAt)}' : invitation.status;
+    final status = invitation.isPending
+        ? 'Pending · expires ${formatDate(invitation.expiresAt)}'
+        : invitation.status;
     final link = 'https://sakhi.sabeerlabs.com/?invite=${invitation.token}';
     return GlassCard(
       blur: false,
@@ -140,10 +335,33 @@ class _InvitationTile extends ConsumerWidget {
         children: [
           MemberAvatar(name: invitation.name),
           const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(invitation.name, style: Theme.of(context).textTheme.titleSmall), Text(invitation.phone, style: Theme.of(context).textTheme.bodySmall), Text(status, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: invitation.isPending ? AppColors.roseGold : null))])),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(invitation.name,
+                    style: Theme.of(context).textTheme.titleSmall),
+                Text(invitation.phone,
+                    style: Theme.of(context).textTheme.bodySmall),
+                Text(status,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color:
+                            invitation.isPending ? AppColors.roseGold : null))
+              ])),
           if (invitation.isPending) ...[
-            IconButton(tooltip: 'Send WhatsApp invite', icon: const Icon(Icons.chat_rounded), onPressed: () => WhatsAppLauncher.send(phone: invitation.phone, message: 'Join CheraSakhi and create your password:\n$link')),
-            IconButton(tooltip: 'Cancel invite', icon: const Icon(Icons.cancel_outlined), onPressed: () => ref.read(communityRepositoryProvider).cancelInvitation(invitation.token)),
+            IconButton(
+                tooltip: 'Send WhatsApp invite',
+                icon: const Icon(Icons.chat_rounded),
+                onPressed: () => WhatsAppLauncher.send(
+                    phone: invitation.phone,
+                    message:
+                        'Join CheraSakhi and create your password:\n$link')),
+            IconButton(
+                tooltip: 'Cancel invite',
+                icon: const Icon(Icons.cancel_outlined),
+                onPressed: () => ref
+                    .read(communityRepositoryProvider)
+                    .cancelInvitation(invitation.token)),
           ],
         ],
       ),
@@ -168,12 +386,14 @@ class _RosterTab extends ConsumerWidget {
       ),
       body: roster.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => EmptyState(icon: Icons.error_outline, title: 'Could not load', message: '$e'),
+        error: (e, _) => EmptyState(
+            icon: Icons.error_outline, title: 'Could not load', message: '$e'),
         data: (list) => list.isEmpty
             ? const EmptyState(
                 icon: Icons.groups_rounded,
                 title: 'No community members yet',
-                message: 'Use Add member in the Invitations tab for account access. '
+                message:
+                    'Use Add member in the Invitations tab for account access. '
                     'This roster remains available for text-only event participants.',
               )
             : ListView.separated(
@@ -196,20 +416,25 @@ class _RosterTab extends ConsumerWidget {
       showDragHandle: true,
       useSafeArea: true,
       builder: (sheet) => Padding(
-        padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
+        padding: EdgeInsets.fromLTRB(
+            20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
         child: Form(
           key: formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Add community member', style: Theme.of(sheet).textTheme.titleLarge),
+              Text('Add community member',
+                  style: Theme.of(sheet).textTheme.titleLarge),
               const SizedBox(height: 16),
               TextFormField(
                 controller: name,
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Full name', prefixIcon: Icon(Icons.person_rounded)),
-                validator: (v) => (v == null || v.trim().length < 2) ? 'Enter a name' : null,
+                decoration: const InputDecoration(
+                    labelText: 'Full name',
+                    prefixIcon: Icon(Icons.person_rounded)),
+                validator: (v) =>
+                    (v == null || v.trim().length < 2) ? 'Enter a name' : null,
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -217,10 +442,13 @@ class _RosterTab extends ConsumerWidget {
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(
                   labelText: 'Login / WhatsApp number',
-                  helperText: '10 digits → +${AppConstants.defaultCountryCode} is added automatically',
+                  helperText:
+                      '10 digits → +${AppConstants.defaultCountryCode} is added automatically',
                   prefixIcon: Icon(Icons.phone_rounded),
                 ),
-                validator: (v) => normalizePhone(v ?? '').length < 11 ? 'Enter a valid number' : null,
+                validator: (v) => normalizePhone(v ?? '').length < 11
+                    ? 'Enter a valid number'
+                    : null,
               ),
               const SizedBox(height: 20),
               GoldButton(
@@ -234,7 +462,8 @@ class _RosterTab extends ConsumerWidget {
                       .read(communityRepositoryProvider)
                       .add(name: name.text, phone: normalizePhone(phone.text))
                       .catchError((Object e) {
-                    messenger.showSnackBar(SnackBar(content: Text('Could not add: $e')));
+                    messenger.showSnackBar(
+                        SnackBar(content: Text('Could not add: $e')));
                   });
                   Navigator.of(sheet).pop();
                 },
@@ -266,8 +495,10 @@ class _PersonTile extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(person.name, style: Theme.of(context).textTheme.titleSmall),
-                Text(person.phone, style: Theme.of(context).textTheme.bodySmall),
+                Text(person.name,
+                    style: Theme.of(context).textTheme.titleSmall),
+                Text(person.phone,
+                    style: Theme.of(context).textTheme.bodySmall),
               ],
             ),
           ),
@@ -279,14 +510,21 @@ class _PersonTile extends ConsumerWidget {
                 context: context,
                 builder: (d) => AlertDialog(
                   title: Text('Remove ${person.name}?'),
-                  content: const Text('They will no longer be able to register. Existing accounts are not deleted.'),
+                  content: const Text(
+                      'They will no longer be able to register. Existing accounts are not deleted.'),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')),
-                    FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Remove')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(d, false),
+                        child: const Text('Cancel')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(d, true),
+                        child: const Text('Remove')),
                   ],
                 ),
               );
-              if (ok == true) await ref.read(communityRepositoryProvider).remove(person.id);
+              if (ok == true) {
+                await ref.read(communityRepositoryProvider).remove(person.id);
+              }
             },
           ),
         ],
@@ -303,7 +541,8 @@ class _AccessTab extends ConsumerWidget {
     final users = ref.watch(registeredUsersProvider);
     return users.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => EmptyState(icon: Icons.error_outline, title: 'Could not load', message: '$e'),
+      error: (e, _) => EmptyState(
+          icon: Icons.error_outline, title: 'Could not load', message: '$e'),
       data: (list) => ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
         children: [
@@ -315,7 +554,10 @@ class _AccessTab extends ConsumerWidget {
               'Switch on “Kuri” to let a registered user see ledgers and the Pamparam draw. '
               'To include them in monthly collections and draws, also add them to the Kuri roster '
               'from the Kuri Ledger.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.berry),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: AppColors.berry),
             ),
           ),
           const SizedBox(height: 12),
@@ -325,16 +567,19 @@ class _AccessTab extends ConsumerWidget {
               child: GlassCard(
                 blur: false,
                 radius: 18,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: Row(
                   children: [
-                    MemberAvatar(name: u.name, highlight: u.isKuriMember || u.isAdmin),
+                    MemberAvatar(
+                        name: u.name, highlight: u.isKuriMember || u.isAdmin),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(u.name, style: Theme.of(context).textTheme.titleSmall),
+                          Text(u.name,
+                              style: Theme.of(context).textTheme.titleSmall),
                           Text(u.isAdmin ? 'Administrator' : (u.phone ?? ''),
                               style: Theme.of(context).textTheme.bodySmall),
                         ],
@@ -343,20 +588,27 @@ class _AccessTab extends ConsumerWidget {
                     if (u.isAdmin)
                       const Padding(
                         padding: EdgeInsets.all(12),
-                        child: Icon(Icons.verified_user_rounded, color: AppColors.roseGold),
+                        child: Icon(Icons.verified_user_rounded,
+                            color: AppColors.roseGold),
                       )
                     else ...[
-                      Text(u.status == 'active' ? 'Active' : 'Disabled', style: Theme.of(context).textTheme.labelMedium),
+                      Text(u.status == 'active' ? 'Active' : 'Disabled',
+                          style: Theme.of(context).textTheme.labelMedium),
                       Switch.adaptive(
                         value: u.status == 'active',
                         activeColor: AppColors.blossom,
-                        onChanged: (v) => ref.read(communityRepositoryProvider).setMemberStatus(u.uid, v),
+                        onChanged: (v) => ref
+                            .read(communityRepositoryProvider)
+                            .setMemberStatus(u.uid, v),
                       ),
-                      Text('Kuri', style: Theme.of(context).textTheme.labelMedium),
+                      Text('Kuri',
+                          style: Theme.of(context).textTheme.labelMedium),
                       Switch.adaptive(
                         value: u.isKuriMember,
                         activeColor: AppColors.blossom,
-                        onChanged: (v) => ref.read(communityRepositoryProvider).setKuriMember(u.uid, v),
+                        onChanged: (v) => ref
+                            .read(communityRepositoryProvider)
+                            .setKuriMember(u.uid, v),
                       ),
                     ],
                   ],
