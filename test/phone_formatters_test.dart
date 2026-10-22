@@ -12,4 +12,17 @@ void main() {
     expect(normalizePhone('0049 30 123456'), '+4930123456');
     expect(normalizePhone('+1 (415) 555-0100'), '+14155550100');
   });
+
+  test('produces WhatsApp digits without duplicating a country code', () {
+    expect(whatsappDigits('9876543210'), '919876543210');
+    expect(whatsappDigits('+919876543210'), '919876543210');
+    expect(whatsappDigits('919876543210'), '919876543210');
+    expect(whatsappDigits('+44 20 7946 0958'), '442079460958');
+  });
+
+  test('rejects too-short numbers but accepts international formats', () {
+    expect(isValidPhone('123456789'), isFalse);
+    expect(isValidPhone('+44 20 7946 0958'), isTrue);
+    expect(isValidPhone('919876543210'), isTrue);
+  });
 }

@@ -13,18 +13,20 @@ class CommunityRepository {
   CollectionReference<Json> get _community => _db.collection('community');
   CollectionReference<Json> get _invitations => _db.collection('invitations');
 
-  Stream<List<CommunityPerson>> watchRoster() => _community.orderBy('name').snapshots().map(
-        (s) => s.docs
-            .map((d) => CommunityPerson(
-                  id: d.id,
-                  name: asString(d.data()['name']),
-                  phone: asString(d.data()['phone']),
-                  addedAt: tsToDate(d.data()['addedAt']),
-                ))
-            .toList(growable: false),
-      );
+  Stream<List<CommunityPerson>> watchRoster() =>
+      _community.orderBy('name').snapshots().map(
+            (s) => s.docs
+                .map((d) => CommunityPerson(
+                      id: d.id,
+                      name: asString(d.data()['name']),
+                      phone: asString(d.data()['phone']),
+                      addedAt: tsToDate(d.data()['addedAt']),
+                    ))
+                .toList(growable: false),
+          );
 
-  Future<void> add({required String name, required String phone}) => _community.add({
+  Future<void> add({required String name, required String phone}) =>
+      _community.add({
         'name': name.trim(),
         'phone': phone,
         'addedAt': FieldValue.serverTimestamp(),
@@ -33,7 +35,8 @@ class CommunityRepository {
   Future<void> remove(String id) => _community.doc(id).delete();
 
   /// Admin only (rules): every registered profile.
-  Stream<List<RegisteredUser>> watchRegisteredUsers() => _db.collection('users').snapshots().map((s) {
+  Stream<List<RegisteredUser>> watchRegisteredUsers() =>
+      _db.collection('users').snapshots().map((s) {
         final list = s.docs.map((d) {
           final m = d.data();
           return RegisteredUser(
@@ -45,7 +48,8 @@ class CommunityRepository {
             status: asString(m['status'], 'active'),
           );
         }).toList()
-          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          ..sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         return list;
       });
 
@@ -53,7 +57,8 @@ class CommunityRepository {
   Future<void> setKuriMember(String uid, bool value) =>
       _db.collection('users').doc(uid).update({'isKuriMember': value});
 
-  Stream<List<Invitation>> watchInvitations() => _invitations.snapshots().map((s) {
+  Stream<List<Invitation>> watchInvitations() =>
+      _invitations.snapshots().map((s) {
         final list = s.docs.map((d) {
           final m = d.data();
           return Invitation(
@@ -66,11 +71,13 @@ class CommunityRepository {
             createdAt: tsToDate(m['createdAt']),
           );
         }).toList();
-        list.sort((a, b) => (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
+        list.sort((a, b) =>
+            (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
         return list;
       });
 
-  Future<String> createInvitation({required String name, required String phone, String note = ''}) async {
+  Future<String> createInvitation(
+      {required String name, required String phone, String note = ''}) async {
     final token = AuthRepository.generateInviteToken();
     final normalized = normalizePhone(phone);
     await _invitations.doc(token).set({
@@ -81,13 +88,45 @@ class CommunityRepository {
       'note': note.trim(),
       'status': 'pending',
       'createdAt': FieldValue.serverTimestamp(),
-      'expiresAt': Timestamp.fromDate(DateTime.now().add(const Duration(days: 7))),
+      'expiresAt':
+          Timestamp.fromDate(DateTime.now().add(const Duration(days: 7))),
     });
     return token;
   }
 
-  Future<void> cancelInvitation(String token) => _invitations.doc(token).update({'status': 'cancelled'});
+  /// Cancels an invitation and creates one replacement in the same batch.
+  /// Existing security rules permit only an admin to cancel/create, so a
+  /// number correction never edits an invitation after it has been sent.
+  Future<String> replaceInvitation({
+    required String token,
+    required String name,
+    required String phone,
+    String note = '',
+  }) async {
+    final newToken = AuthRepository.generateInviteToken();
+    final normalized = normalizePhone(phone);
+    final batch = _db.batch();
+    batch.update(_invitations.doc(token), {'status': 'cancelled'});
+    batch.set(_invitations.doc(newToken), {
+      'token': newToken,
+      'name': name.trim(),
+      'phone': normalized,
+      'loginAlias': phoneLoginAlias(normalized),
+      'note': note.trim(),
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt':
+          Timestamp.fromDate(DateTime.now().add(const Duration(days: 7))),
+    });
+    await batch.commit();
+    return newToken;
+  }
 
-  Future<void> setMemberStatus(String uid, bool enabled) =>
-      _db.collection('users').doc(uid).update({'status': enabled ? 'active' : 'disabled'});
+  Future<void> cancelInvitation(String token) =>
+      _invitations.doc(token).update({'status': 'cancelled'});
+
+  Future<void> setMemberStatus(String uid, bool enabled) => _db
+      .collection('users')
+      .doc(uid)
+      .update({'status': enabled ? 'active' : 'disabled'});
 }

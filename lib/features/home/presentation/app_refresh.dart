@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers/firebase_providers.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../auth/presentation/guards/kuri_guard.dart';
 import '../../events/presentation/providers/events_providers.dart';
 import '../../kuri/presentation/providers/kuri_providers.dart';
 import '../../lottery_wheel/presentation/providers/wheel_providers.dart';
@@ -20,15 +21,36 @@ const _deepBerry = Color(0xFF4A0E2E);
 /// Firestore is already real-time, so this is mainly for reassurance and for
 /// recovering after the phone was offline: it re-enables the network, does one
 /// server round-trip, then invalidates the data providers.
-Future<RefreshOutcome> refreshAppData(WidgetRef ref) async {
+Future<RefreshOutcome>? _refreshInFlight;
+
+Future<RefreshOutcome> refreshAppData(WidgetRef ref) {
+  final active = _refreshInFlight;
+  if (active != null) return active;
+
+  final future = _performRefresh(ref);
+  _refreshInFlight = future;
+  future.then(
+    (_) {
+      if (identical(_refreshInFlight, future)) _refreshInFlight = null;
+    },
+    onError: (Object _, StackTrace __) {
+      if (identical(_refreshInFlight, future)) _refreshInFlight = null;
+    },
+  );
+  return future;
+}
+
+Future<RefreshOutcome> _performRefresh(WidgetRef ref) async {
   final db = ref.read(firestoreProvider);
+  final canReadKuri = ref.read(canAccessKuriProvider);
   final started = DateTime.now();
   var outcome = RefreshOutcome.refreshed;
 
   try {
     await db.enableNetwork();
+    final probeCollection = canReadKuri ? 'members' : 'quizzes';
     await db
-        .collection('members')
+        .collection(probeCollection)
         .limit(1)
         .get(const GetOptions(source: Source.server))
         .timeout(const Duration(seconds: 8));
@@ -36,12 +58,16 @@ Future<RefreshOutcome> refreshAppData(WidgetRef ref) async {
     outcome = RefreshOutcome.offline; // cached data stays on screen
   }
 
-  // Families are invalidated as a whole (every month / cycle / event).
-  ref.invalidate(membersProvider);
-  ref.invalidate(activeCycleProvider);
-  ref.invalidate(paymentsProvider);
-  ref.invalidate(claimsProvider);
-  ref.invalidate(drawsProvider);
+  // Families are invalidated as a whole (every month / cycle / event). Kuri
+  // providers are skipped for community-only members because Firestore rules
+  // intentionally deny those collections to that role.
+  if (canReadKuri) {
+    ref.invalidate(membersProvider);
+    ref.invalidate(activeCycleProvider);
+    ref.invalidate(paymentsProvider);
+    ref.invalidate(claimsProvider);
+    ref.invalidate(drawsProvider);
+  }
   ref.invalidate(eventsProvider);
   ref.invalidate(contributionsProvider);
   ref.invalidate(expensesProvider);
@@ -79,7 +105,8 @@ void showRefreshSnackBar(BuildContext context, RefreshOutcome outcome) {
                 ok
                     ? 'ഡാറ്റ അപ്‌ഡേറ്റ് ചെയ്തു (Data refreshed)'
                     : 'ഓഫ്‌ലൈൻ — സേവ് ചെയ്ത ഡാറ്റ കാണിക്കുന്നു (Offline – showing saved data)',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w500),
               ),
             ),
           ],
@@ -95,13 +122,14 @@ class RefreshActionButton extends ConsumerStatefulWidget {
   final double size;
 
   @override
-  ConsumerState<RefreshActionButton> createState() => _RefreshActionButtonState();
+  ConsumerState<RefreshActionButton> createState() =>
+      _RefreshActionButtonState();
 }
 
 class _RefreshActionButtonState extends ConsumerState<RefreshActionButton>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _spin =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+  late final AnimationController _spin = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 800));
   bool _busy = false;
 
   @override
@@ -120,7 +148,8 @@ class _RefreshActionButtonState extends ConsumerState<RefreshActionButton>
 
     if (!mounted) return;
     _spin.stop();
-    await _spin.animateTo(1, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    await _spin.animateTo(1,
+        duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
     if (!mounted) return;
     _spin.reset();
     setState(() => _busy = false);
@@ -151,7 +180,8 @@ class _RefreshActionButtonState extends ConsumerState<RefreshActionButton>
             ),
             child: RotationTransition(
               turns: _spin,
-              child: Icon(Icons.refresh_rounded, color: Colors.white, size: widget.size * 0.55),
+              child: Icon(Icons.refresh_rounded,
+                  color: Colors.white, size: widget.size * 0.55),
             ),
           ),
         ),
@@ -165,7 +195,8 @@ class _RefreshActionButtonState extends ConsumerState<RefreshActionButton>
 /// The child must be scrollable; give it
 /// `physics: const AlwaysScrollableScrollPhysics()` so short lists can still be pulled.
 class AppRefreshIndicator extends ConsumerWidget {
-  const AppRefreshIndicator({super.key, required this.child, this.edgeOffset = 0});
+  const AppRefreshIndicator(
+      {super.key, required this.child, this.edgeOffset = 0});
 
   final Widget child;
   final double edgeOffset;

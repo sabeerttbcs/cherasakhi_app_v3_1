@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/whatsapp.dart';
@@ -154,8 +155,8 @@ class _InvitationsTab extends ConsumerWidget {
                             'Paste a number; it is normalized to E.164 when you continue.',
                         prefixIcon: Icon(Icons.phone_rounded),
                       ),
-                      validator: (v) => normalizePhone(v ?? '').length < 11
-                          ? 'Enter a valid number'
+                      validator: (v) => !isValidPhone(v ?? '')
+                          ? 'Enter a valid international number'
                           : null,
                     ),
                   ],
@@ -196,15 +197,19 @@ class _InvitationsTab extends ConsumerWidget {
                             name: name.text,
                             phone: phone.text,
                             note: note.text);
-                    final link = 'https://sakhi.sabeerlabs.com/?invite=$token';
-                    await WhatsAppLauncher.send(
-                        phone: normalizePhone(phone.text),
-                        message:
-                            'Hello ${name.text.trim()} 🌸\n\nYou are invited to CheraSakhi. Create your password here:\n$link\n\nThis one-time invitation expires in 7 days.');
-                    if (context.mounted) Navigator.of(sheet).pop();
-                    messenger.showSnackBar(const SnackBar(
-                        content:
-                            Text('Invitation created and WhatsApp opened.')));
+                    final invitation = Invitation(
+                      token: token,
+                      name: name.text.trim(),
+                      phone: normalizePhone(phone.text),
+                      status: 'pending',
+                      note: note.text.trim(),
+                      expiresAt: DateTime.now().add(const Duration(days: 7)),
+                    );
+                    if (!sheet.mounted) return;
+                    Navigator.of(sheet).pop();
+                    if (context.mounted) {
+                      await _showInvitationActions(context, ref, invitation);
+                    }
                   } catch (e) {
                     messenger.showSnackBar(SnackBar(
                         content: Text('Could not create invitation: $e')));
@@ -222,7 +227,7 @@ class _InvitationsTab extends ConsumerWidget {
     final value = controller.text.trim();
     if (value.isEmpty) return;
     final normalized = normalizePhone(value);
-    if (normalized.length < 11 || normalized == value) return;
+    if (!isValidPhone(value) || normalized == value) return;
     controller.value = TextEditingValue(
         text: normalized,
         selection: TextSelection.collapsed(offset: normalized.length));
@@ -230,11 +235,8 @@ class _InvitationsTab extends ConsumerWidget {
 
   static Future<String?> _choosePhoneNumber(
       BuildContext context, List<String> numbers) async {
-    final choices = numbers
-        .map(normalizePhone)
-        .where((number) => number.length >= 11)
-        .toSet()
-        .toList();
+    final choices =
+        numbers.map(normalizePhone).where(isValidPhone).toSet().toList();
     if (choices.length <= 1) return choices.isEmpty ? null : choices.first;
     return showDialog<String>(
       context: context,
@@ -314,6 +316,251 @@ class _InvitationsTab extends ConsumerWidget {
     );
     return result ?? false;
   }
+
+  static String _invitationMessage(Invitation invitation) =>
+      WhatsAppLauncher.invitationMessage(
+          name: invitation.name, token: invitation.token);
+
+  static Future<void> _showInvitationActions(
+    BuildContext context,
+    WidgetRef ref,
+    Invitation invitation,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Invitation Created'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Saved for ${invitation.name}.'),
+            const SizedBox(height: 8),
+            Text(invitation.phone,
+                style: Theme.of(dialog).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            const Text(
+                'WhatsApp is not marked as sent. Open the chat and press Send yourself.'),
+          ],
+        ),
+        actions: [
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.whatsapp),
+            onPressed: () => _openWhatsApp(context, ref, invitation, dialog),
+            icon: const Icon(Icons.chat_rounded),
+            label: const Text('OPEN WHATSAPP'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _copyInvitation(context, invitation),
+            icon: const Icon(Icons.copy_rounded),
+            label: const Text('COPY INVITATION'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _copyPhone(context, invitation),
+            icon: const Icon(Icons.phone_rounded),
+            label: const Text('COPY PHONE NUMBER'),
+          ),
+          TextButton(
+              onPressed: () => Navigator.of(dialog).pop(),
+              child: const Text('CLOSE')),
+        ],
+      ),
+    );
+  }
+
+  static Future<void> _openWhatsApp(
+    BuildContext context,
+    WidgetRef ref,
+    Invitation invitation,
+    BuildContext dialog,
+  ) async {
+    final opened = await WhatsAppLauncher.openInvitation(
+      phone: invitation.phone,
+      message: _invitationMessage(invitation),
+    );
+    if (!context.mounted || opened) {
+      if (opened && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('WhatsApp opened. Press Send to deliver it.')));
+      }
+      return;
+    }
+    if (dialog.mounted) Navigator.of(dialog).pop();
+    if (context.mounted) {
+      await _showWhatsAppError(context, ref, invitation);
+    }
+  }
+
+  static Future<void> _openExistingInvitation(
+    BuildContext context,
+    WidgetRef ref,
+    Invitation invitation,
+  ) async {
+    final opened = await WhatsAppLauncher.openInvitation(
+      phone: invitation.phone,
+      message: _invitationMessage(invitation),
+    );
+    if (!context.mounted) return;
+    if (opened) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('WhatsApp opened. Press Send to deliver it.')));
+    } else {
+      await _showWhatsAppError(context, ref, invitation);
+    }
+  }
+
+  static Future<void> _showWhatsAppError(
+    BuildContext context,
+    WidgetRef ref,
+    Invitation invitation,
+  ) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('WhatsApp could not be opened'),
+        content: Text(
+            'The invitation is preserved for ${invitation.phone}. You can copy it below, retry, or correct the number.'),
+        actions: [
+          TextButton(
+              onPressed: () => _copyInvitation(context, invitation),
+              child: const Text('COPY INVITATION')),
+          TextButton(
+              onPressed: () => Navigator.of(dialog).pop('retry'),
+              child: const Text('RETRY WHATSAPP')),
+          TextButton(
+              onPressed: () => Navigator.of(dialog).pop('close'),
+              child: const Text('CLOSE')),
+          FilledButton(
+              onPressed: () => Navigator.of(dialog).pop('edit'),
+              child: const Text('EDIT NUMBER')),
+        ],
+      ),
+    );
+    if (action == 'edit' && context.mounted) {
+      await _showReplacementSheet(context, ref, invitation);
+    } else if (action == 'retry' && context.mounted) {
+      await _openExistingInvitation(context, ref, invitation);
+    }
+  }
+
+  static Future<void> _copyInvitation(
+      BuildContext context, Invitation invitation) async {
+    final copied = await _copyText(_invitationMessage(invitation));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            copied ? 'Invitation Copied' : 'Could not copy the invitation.')));
+  }
+
+  static Future<void> _copyPhone(
+      BuildContext context, Invitation invitation) async {
+    final copied = await _copyText(invitation.phone);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(copied
+            ? 'Phone number copied'
+            : 'Could not copy the phone number.')));
+  }
+
+  static Future<bool> _copyText(String text) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> _showReplacementSheet(
+    BuildContext context,
+    WidgetRef ref,
+    Invitation oldInvitation,
+  ) async {
+    final name = TextEditingController(text: oldInvitation.name);
+    final phone = TextEditingController(text: oldInvitation.phone);
+    final note = TextEditingController(text: oldInvitation.note);
+    final formKey = GlobalKey<FormState>();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 0, 20, MediaQuery.viewInsetsOf(sheet).bottom + 24),
+        child: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Correct invitation number',
+                  style: Theme.of(sheet).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              TextFormField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'Full name')),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: phone,
+                keyboardType: TextInputType.phone,
+                decoration:
+                    const InputDecoration(labelText: 'Correct WhatsApp number'),
+                validator: (v) => !isValidPhone(v ?? '')
+                    ? 'Enter a valid international number'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                  controller: note,
+                  maxLines: 2,
+                  decoration:
+                      const InputDecoration(labelText: 'Note (optional)')),
+              const SizedBox(height: 16),
+              GoldButton(
+                label: 'CREATE REPLACEMENT',
+                icon: Icons.swap_horiz_rounded,
+                expand: true,
+                onPressed: () async {
+                  _normalisePhoneController(phone);
+                  if (!formKey.currentState!.validate()) return;
+                  try {
+                    final token = await ref
+                        .read(communityRepositoryProvider)
+                        .replaceInvitation(
+                          token: oldInvitation.token,
+                          name: name.text,
+                          phone: phone.text,
+                          note: note.text,
+                        );
+                    final replacement = Invitation(
+                      token: token,
+                      name: name.text.trim(),
+                      phone: normalizePhone(phone.text),
+                      status: 'pending',
+                      note: note.text.trim(),
+                      expiresAt: DateTime.now().add(const Duration(days: 7)),
+                    );
+                    if (!sheet.mounted) return;
+                    Navigator.of(sheet).pop();
+                    if (context.mounted) {
+                      await _showInvitationActions(context, ref, replacement);
+                    }
+                  } catch (e) {
+                    if (sheet.mounted) {
+                      ScaffoldMessenger.of(sheet).showSnackBar(SnackBar(
+                          content: Text('Could not replace invitation: $e')));
+                    }
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _InvitationTile extends ConsumerWidget {
@@ -326,42 +573,74 @@ class _InvitationTile extends ConsumerWidget {
     final status = invitation.isPending
         ? 'Pending · expires ${formatDate(invitation.expiresAt)}'
         : invitation.status;
-    final link = 'https://sakhi.sabeerlabs.com/?invite=${invitation.token}';
     return GlassCard(
       blur: false,
       radius: 18,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          MemberAvatar(name: invitation.name),
-          const SizedBox(width: 12),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(invitation.name,
-                    style: Theme.of(context).textTheme.titleSmall),
-                Text(invitation.phone,
-                    style: Theme.of(context).textTheme.bodySmall),
-                Text(status,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color:
-                            invitation.isPending ? AppColors.roseGold : null))
-              ])),
+          Row(
+            children: [
+              MemberAvatar(name: invitation.name),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(invitation.name,
+                        style: Theme.of(context).textTheme.titleSmall),
+                    Text(invitation.phone,
+                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(status,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: invitation.isPending
+                                ? AppColors.roseGold
+                                : null))
+                  ])),
+            ],
+          ),
           if (invitation.isPending) ...[
-            IconButton(
-                tooltip: 'Send WhatsApp invite',
-                icon: const Icon(Icons.chat_rounded),
-                onPressed: () => WhatsAppLauncher.send(
-                    phone: invitation.phone,
-                    message:
-                        'Join CheraSakhi and create your password:\n$link')),
-            IconButton(
-                tooltip: 'Cancel invite',
-                icon: const Icon(Icons.cancel_outlined),
-                onPressed: () => ref
-                    .read(communityRepositoryProvider)
-                    .cancelInvitation(invitation.token)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.whatsapp),
+                  onPressed: () => _InvitationsTab._openExistingInvitation(
+                      context, ref, invitation),
+                  icon: const Icon(Icons.chat_rounded),
+                  label: const Text('OPEN WHATSAPP'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _InvitationsTab._openExistingInvitation(
+                      context, ref, invitation),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('RETRY WHATSAPP'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _InvitationsTab._copyInvitation(context, invitation),
+                  icon: const Icon(Icons.copy_rounded),
+                  label: const Text('COPY INVITATION'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _InvitationsTab._copyPhone(context, invitation),
+                  icon: const Icon(Icons.phone_rounded),
+                  label: const Text('COPY PHONE NUMBER'),
+                ),
+                IconButton(
+                  tooltip: 'Cancel invite',
+                  icon: const Icon(Icons.cancel_outlined),
+                  onPressed: () => ref
+                      .read(communityRepositoryProvider)
+                      .cancelInvitation(invitation.token),
+                ),
+              ],
+            ),
           ],
         ],
       ),
