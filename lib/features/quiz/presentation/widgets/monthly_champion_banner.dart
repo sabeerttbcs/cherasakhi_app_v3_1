@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/notifications/notification_service.dart';
 import '../../data/quiz_report_repository.dart';
 import '../../domain/entities/quiz_report_models.dart';
 import '../providers/quiz_providers.dart';
@@ -21,6 +22,8 @@ class _MonthlyChampionBannerState extends ConsumerState<MonthlyChampionBanner>
   late final AnimationController _controller;
   Timer? _dismissTimer;
   bool _visible = false;
+  bool _reducedMotion = false;
+  bool _soundMuted = false;
   QuizPrizeSelection? _prize;
 
   @override
@@ -31,6 +34,7 @@ class _MonthlyChampionBannerState extends ConsumerState<MonthlyChampionBanner>
       duration: const Duration(milliseconds: 650),
       reverseDuration: const Duration(milliseconds: 450),
     );
+    _soundMuted = NotificationService.instance.muted.value;
   }
 
   @override
@@ -45,9 +49,8 @@ class _MonthlyChampionBannerState extends ConsumerState<MonthlyChampionBanner>
     ref.read(monthlyChampionShownProvider.notifier).state = true;
     _prize = prize;
     _visible = true;
-    final reducedMotion =
-        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    if (reducedMotion) {
+    _reducedMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (_reducedMotion) {
       _controller.value = 1;
     } else {
       _controller.forward();
@@ -58,9 +61,28 @@ class _MonthlyChampionBannerState extends ConsumerState<MonthlyChampionBanner>
   void _dismiss() {
     if (!_visible) return;
     _dismissTimer?.cancel();
+    if (_reducedMotion) {
+      if (mounted) setState(() => _visible = false);
+      return;
+    }
     _controller.reverse().whenComplete(() {
       if (mounted) setState(() => _visible = false);
     });
+  }
+
+  void _toggleMute() {
+    _soundMuted = !_soundMuted;
+    NotificationService.instance.muted.value = _soundMuted;
+    setState(() {});
+  }
+
+  void _playCelebrationSound() {
+    if (_soundMuted) return;
+    // This is deliberately user-triggered. Browser/PWA autoplay policies may
+    // reject the call; NotificationService catches and ignores that safely.
+    NotificationService.instance
+        .playSound('sounds/chime.wav', volume: 0.65)
+        .ignore();
   }
 
   @override
@@ -75,24 +97,60 @@ class _MonthlyChampionBannerState extends ConsumerState<MonthlyChampionBanner>
     final current = _prize;
     if (!_visible || current == null) return const SizedBox.shrink();
 
-    return IgnorePointer(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, -1.2),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(
-            parent: _controller,
-            curve: Curves.easeOutCubic,
-          )),
-          child: FadeTransition(
-            opacity: _controller,
-            child: RepaintBoundary(
-              child: _BannerCard(prize: current),
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          IgnorePointer(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  // Horizontal entrance: the congratulations flag scrolls in
+                  // from the left instead of dropping vertically.
+                  begin: const Offset(-1.15, 0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(
+                  parent: _controller,
+                  curve: Curves.easeOutCubic,
+                )),
+                child: FadeTransition(
+                  opacity: _controller,
+                  child: RepaintBoundary(
+                    child: _BannerCard(prize: current),
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
+          Positioned(
+            right: 16,
+            top: 10,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip:
+                      _soundMuted ? 'Sound muted' : 'Play celebration sound',
+                  onPressed: _soundMuted ? null : _playCelebrationSound,
+                  icon: const Icon(Icons.volume_up_rounded),
+                  color: Colors.white,
+                  iconSize: 18,
+                ),
+                IconButton(
+                  tooltip: _soundMuted ? 'Enable sound' : 'Mute sound',
+                  onPressed: _toggleMute,
+                  icon: Icon(_soundMuted
+                      ? Icons.notifications_off_outlined
+                      : Icons.notifications_none_outlined),
+                  color: Colors.white70,
+                  iconSize: 17,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -108,7 +166,7 @@ class _BannerCard extends StatelessWidget {
     final photo = isConsentPhotoUrl(prize.photoUrl) ? prize.photoUrl : null;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      padding: const EdgeInsets.fromLTRB(16, 11, 104, 11),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         gradient: const LinearGradient(
