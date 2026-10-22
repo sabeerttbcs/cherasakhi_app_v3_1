@@ -610,15 +610,27 @@ class _QuizReportsScreenState extends ConsumerState<QuizReportsScreen> {
           CircleAvatar(
             radius: 30,
             backgroundColor: Colors.white24,
-            backgroundImage: photo == null ? null : NetworkImage(photo),
-            onBackgroundImageError: photo == null ? null : (_, __) {},
             child: photo == null
                 ? Text(championInitials(prize.recipientName),
                     style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w800,
                         fontSize: 19))
-                : null,
+                : ClipOval(
+                    child: Image.network(
+                      photo,
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Text(
+                        championInitials(prize.recipientName),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 19),
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 14),
           Expanded(

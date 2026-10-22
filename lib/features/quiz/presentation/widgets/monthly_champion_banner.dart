@@ -186,13 +186,23 @@ class _BannerCard extends StatelessWidget {
           CircleAvatar(
             radius: 22,
             backgroundColor: Colors.white24,
-            backgroundImage: photo == null ? null : NetworkImage(photo),
-            onBackgroundImageError: photo == null ? null : (_, __) {},
             child: photo == null
                 ? Text(championInitials(prize.recipientName),
                     style: const TextStyle(
                         color: Colors.white, fontWeight: FontWeight.w800))
-                : null,
+                : ClipOval(
+                    child: Image.network(
+                      photo,
+                      width: 44,
+                      height: 44,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Text(
+                        championInitials(prize.recipientName),
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 10),
           Expanded(
